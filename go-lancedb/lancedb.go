@@ -24,7 +24,7 @@
 package lancedb
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/../rust-cgo/target/release -llancedb_cgo -lm -ldl
+#cgo LDFLAGS: -L${SRCDIR}/../libs/${GOOS}-${GOARCH} -L${SRCDIR}/../rust-cgo/target/release -llancedb_cgo -lm -ldl
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security
 #include <stdlib.h>
 #include <stdint.h>

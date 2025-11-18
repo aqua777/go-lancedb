@@ -56,6 +56,10 @@ build-windows-amd64:
 	cd rust-cgo && cargo build --release --target x86_64-pc-windows-gnu
 	cd cgo && CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build .
 
+# Build pre-built libraries for distribution
+build-prebuilt-libs:
+	@./scripts/build-prebuilt-libs.sh
+
 # Help target
 help:
 	@echo "Available targets:"
@@ -72,3 +76,4 @@ help:
 	@echo "  build-darwin-amd64    - Build for macOS x86_64"
 	@echo "  build-darwin-arm64    - Build for macOS ARM64 (Apple Silicon)"
 	@echo "  build-windows-amd64   - Build for Windows x86_64"
+	@echo "  build-prebuilt-libs   - Build pre-built libraries for linux/arm64 and darwin/arm64"
