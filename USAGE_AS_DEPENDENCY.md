@@ -14,6 +14,59 @@ This guide explains how to use the LanceDB Go bindings in your own projects.
 
 ---
 
+## Important: Dynamic Library Dependency
+
+**⚠️ Critical:** This library uses a dynamic Rust library (`liblancedb_cgo.dylib`/`.so`/`.dll`) that must be distributed alongside your compiled binary.
+
+### For Development
+
+During development, the library is automatically found using the embedded rpath pointing to the module cache. You can simply:
+
+```bash
+go get github.com/aqua777/go-lancedb
+go run main.go  # Works out of the box
+```
+
+### For Distribution
+
+When building a binary for distribution, you **must**:
+
+1. **Set the CGO flag whitelist** (allows `@executable_path` rpath):
+   ```bash
+   export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
+   ```
+
+2. **Build your binary**:
+   ```bash
+   go build -o myapp
+   ```
+
+3. **Copy the dynamic library** next to your binary:
+   ```bash
+   # macOS (from go module cache or libs directory)
+   cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/darwin-arm64/liblancedb_cgo.dylib .
+   
+   # Linux
+   cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/linux-amd64/liblancedb_cgo.so .
+   ```
+
+4. **Distribute both files together**:
+   ```
+   your-release/
+   ├── myapp                    # Your binary
+   └── liblancedb_cgo.dylib    # The dynamic library (must be in same directory)
+   ```
+
+### Platform-Specific Libraries
+
+Available in the `libs/` directory of the module:
+- macOS ARM64: `libs/darwin-arm64/liblancedb_cgo.dylib`
+- macOS Intel: `libs/darwin-amd64/liblancedb_cgo.dylib`
+- Linux AMD64: `libs/linux-amd64/liblancedb_cgo.so`
+- Linux ARM64: `libs/linux-arm64/liblancedb_cgo.so`
+
+---
+
 ## Quick Start (Local Development)
 
 ### Option 1: Direct Path (Development)
@@ -197,105 +250,118 @@ make clean    # Cleans build artifacts
 
 ## Distribution Strategies
 
-### Strategy 1: Pre-built Libraries (Recommended for Production)
+### Strategy 1: Simple Distribution (Recommended)
 
-Build the Rust library for target platforms and distribute it:
+The library is configured with `@executable_path` rpath, so the dynamic library is found next to your binary at runtime.
+
+**Build script example:**
 
 ```bash
-# Build for different platforms
-cd golang/rust-cgo
+#!/bin/bash
+# build.sh
 
-# macOS ARM64 (Apple Silicon)
-cargo build --release --target aarch64-apple-darwin
+# Set required CGO flag
+export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
 
-# macOS x86_64 (Intel)
-cargo build --release --target x86_64-apple-darwin
+# Build your app
+go build -o myapp
 
-# Linux x86_64
-cargo build --release --target x86_64-unknown-linux-gnu
+# Copy the appropriate dynamic library
+case "$(uname -s)" in
+    Darwin)
+        if [[ "$(uname -m)" == "arm64" ]]; then
+            cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/darwin-arm64/liblancedb_cgo.dylib .
+        else
+            cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/darwin-amd64/liblancedb_cgo.dylib .
+        fi
+        ;;
+    Linux)
+        if [[ "$(uname -m)" == "aarch64" ]]; then
+            cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/linux-arm64/liblancedb_cgo.so .
+        else
+            cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/linux-amd64/liblancedb_cgo.so .
+        fi
+        ;;
+esac
 
-# Linux ARM64
-cargo build --release --target aarch64-unknown-linux-gnu
-
-# Windows x86_64
-cargo build --release --target x86_64-pc-windows-msvc
+echo "Built myapp with dynamic library"
 ```
 
 **Package structure:**
 ```
-your-app/
-├── bin/
-│   └── myapp
-├── lib/
-│   ├── darwin-arm64/
-│   │   └── liblancedb_cgo.dylib
-│   ├── darwin-amd64/
-│   │   └── liblancedb_cgo.dylib
-│   ├── linux-amd64/
-│   │   └── liblancedb_cgo.so
-│   └── windows-amd64/
-│       └── lancedb_cgo.dll
-└── README.md
+your-release/
+├── myapp                    # Your compiled binary
+└── liblancedb_cgo.dylib    # Dynamic library (same directory)
 ```
 
-**Set library path at runtime:**
+**Ship both files together** - that's it! The binary will find the library at runtime.
 
-```go
-package main
+### Strategy 2: Subdirectory Organization
 
-import (
-    "os"
-    "runtime"
-    "path/filepath"
-)
+If you prefer organizing libraries in a subdirectory:
 
-func init() {
-    // Determine platform
-    libPath := filepath.Join("lib", runtime.GOOS+"-"+runtime.GOARCH)
-    
-    // Add to library path
-    if runtime.GOOS == "linux" {
-        os.Setenv("LD_LIBRARY_PATH", libPath+":"+os.Getenv("LD_LIBRARY_PATH"))
-    } else if runtime.GOOS == "darwin" {
-        os.Setenv("DYLD_LIBRARY_PATH", libPath+":"+os.Getenv("DYLD_LIBRARY_PATH"))
-    }
-}
+```bash
+# Build with custom rpath
+export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path/lib'
+go build -ldflags="-r \$ORIGIN/lib" -o myapp
+
+# Create lib directory and copy
+mkdir -p lib
+cp $(go list -f '{{.Dir}}' github.com/aqua777/go-lancedb)/libs/darwin-arm64/liblancedb_cgo.dylib lib/
 ```
 
-### Strategy 2: Embedding with CGO
+**Note:** You'll need to modify the `lancedb.go` LDFLAGS in your vendored copy to use `-Wl,-rpath,@executable_path/lib` instead.
 
-You can embed the library path in the Go binary:
-
-```go
-// In your project's lancedb_wrapper.go
-
-package main
-
-/*
-#cgo LDFLAGS: -L${SRCDIR}/lib/${GOOS}-${GOARCH} -llancedb_cgo -lm -ldl
-#cgo darwin LDFLAGS: -framework CoreFoundation -framework Security
-*/
-import "C"
+**Package structure:**
+```
+your-release/
+├── myapp
+└── lib/
+    └── liblancedb_cgo.dylib
 ```
 
-### Strategy 3: System-wide Installation
+### Strategy 3: Cross-Platform Releases
 
-Install the library system-wide:
+For multi-platform releases with goreleaser or similar:
+
+```yaml
+# .goreleaser.yml
+builds:
+  - env:
+      - CGO_ENABLED=1
+      - CGO_LDFLAGS_ALLOW=-Wl,-rpath,@executable_path
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    hooks:
+      post:
+        # Copy the appropriate dynamic library
+        - bash -c 'cp $(go list -f "{{.Dir}}" github.com/aqua777/go-lancedb)/libs/{{ .Os }}-{{ .Arch }}/liblancedb_cgo.{{ if eq .Os "darwin" }}dylib{{ else }}so{{ end }} {{ .Path }}/../'
+
+archives:
+  - format: tar.gz
+    files:
+      - liblancedb_cgo.*
+```
+
+### Strategy 4: System-wide Installation (Not Recommended)
+
+Only for system-level deployments where you control the environment:
 
 ```bash
 # macOS
 sudo cp liblancedb_cgo.dylib /usr/local/lib/
+sudo update_dyld_shared_cache  # macOS 11+
 
 # Linux
 sudo cp liblancedb_cgo.so /usr/local/lib/
 sudo ldconfig
-
-# Verify
-ldconfig -p | grep lancedb  # Linux
-ls -l /usr/local/lib/liblancedb*  # macOS
 ```
 
-Then your Go code can find it automatically.
+**Downsides:** Requires sudo, conflicts between versions, harder to uninstall.
 
 ---
 
@@ -332,6 +398,7 @@ COPY --from=rust-builder /build/rust-cgo/target/release/liblancedb_cgo.so /usr/l
 COPY . .
 
 # Build Go application
+ENV CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
 RUN CGO_ENABLED=1 go build -o myapp .
 
 # Runtime stage
@@ -422,6 +489,8 @@ jobs:
           cargo build --release
       
       - name: Build Go application
+        env:
+          CGO_LDFLAGS_ALLOW: '-Wl,-rpath,@executable_path'
         run: go build -v ./...
       
       - name: Run tests
@@ -467,6 +536,8 @@ build-go:
   image: golang:1.21
   dependencies:
     - build-rust
+  variables:
+    CGO_LDFLAGS_ALLOW: '-Wl,-rpath,@executable_path'
   script:
     - cp vendor/lancedb/golang/rust-cgo/target/release/liblancedb_cgo.so /usr/local/lib/
     - ldconfig
@@ -523,6 +594,35 @@ dyld: Library not loaded: liblancedb_cgo.dylib
    sudo cp liblancedb_cgo.so /usr/local/lib/
    sudo ldconfig
    ```
+
+### Issue: Invalid LDFLAGS
+
+**Error:**
+```
+invalid flag in #cgo LDFLAGS: -Wl,-rpath,@executable_path
+```
+
+**Solution:**
+
+Go's security sandbox blocks the `@executable_path` flag by default. Whitelist it:
+
+```bash
+export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
+go build
+```
+
+Add to your shell profile for persistence:
+```bash
+# ~/.zshrc or ~/.bashrc
+export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
+```
+
+Or create a build script:
+```bash
+#!/bin/bash
+export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
+go build "$@"
+```
 
 ### Issue: CGO Not Enabled
 
@@ -714,7 +814,13 @@ func main() {
 EOF
 
 # 7. Build and run
+export CGO_LDFLAGS_ALLOW='-Wl,-rpath,@executable_path'
 go build -o my-rag-app
+
+# Copy the dynamic library for distribution
+cp vendor/lancedb/golang/cgo/libs/darwin-arm64/liblancedb_cgo.dylib .
+
+# Run
 ./my-rag-app
 ```
 
