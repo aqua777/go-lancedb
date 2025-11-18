@@ -1,0 +1,2 @@
+libs/**/*.so filter=lfs diff=lfs merge=lfs -text
+libs/**/*.dylib filter=lfs diff=lfs merge=lfs -text
