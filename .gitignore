@@ -1,0 +1,18 @@
+# this shold allow to keep files in this location but exclude them from the git status
+**/*.not-*
+
+# Not needed for now.
+scripts/
+
+# Rust CGO build artifacts and dependencies
+rust-cgo/target/
+rust-cgo/Cargo.lock
+
+# Rust backup files
+rust-cgo/**/*.rs.bk
+
+# Cargo local config
+.cargo/config
+
+# Debug symbols (Windows)
+rust-cgo/**/*.pdb

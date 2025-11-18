@@ -1,0 +1,27 @@
+[package]
+name = "lancedb-cgo"
+description = "CGO bindings for LanceDB"
+version = "0.10.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+lancedb = { version = "0.10.0", default-features = false }
+lance = "0.17.0"
+arrow = { version = "52.2", features = ["ffi"] }
+arrow-array = "52.2"
+arrow-schema = "52.2"
+tokio = "1.46"
+snafu = "0.7.5"
+lazy_static = "1"
+serde = { version = "^1" }
+serde_json = { version = "1" }
+libc = "0.2"
+futures = "0.3"
+
+[features]
+default = ["lancedb/default"]
