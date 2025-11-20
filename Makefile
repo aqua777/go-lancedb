@@ -11,50 +11,58 @@ build-rust:
 
 # Build the Go package (also builds Rust library via cgo)
 build-go:
-	cd cgo && go build .
+	go build .
 
 # Build everything
 build: build-rust build-go
 
 # Run tests
 test:
-	cd cgo && go test -v .
+	go test -v ./...
 
 # Build example
 example:
-	cd cgo && go build -o example ./example
+	go build -o examples/basic/example ./examples/basic && \
+	[ -f examples/basic/example ] && (./examples/basic/example && rm -f examples/basic/example)
 
 # Clean build artifacts
 clean:
 	cd rust-cgo && cargo clean
-	cd cgo && go clean
-	rm -f cgo/example
+	go clean ./...
+	[ -f examples/basic/example ] && rm -f examples/basic/example
 
 # Install dependencies
 deps:
 	cd rust-cgo && cargo fetch
-	cd cgo && go mod tidy
+	go mod tidy
 
-# Cross-compilation targets
-build-linux-amd64:
-	cd rust-cgo && cargo build --release --target x86_64-unknown-linux-gnu
-	cd cgo && CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build .
+# Cross-compilation targets (parameterized to avoid duplication)
+OS_ARCHES := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64
 
-build-linux-arm64:
-	cd rust-cgo && cargo build --release --target aarch64-unknown-linux-gnu
-	cd cgo && CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build .
+RUST_TARGET_linux-amd64 := x86_64-unknown-linux-gnu
+RUST_TARGET_linux-arm64 := aarch64-unknown-linux-gnu
+RUST_TARGET_darwin-amd64 := x86_64-apple-darwin
+RUST_TARGET_darwin-arm64 := aarch64-apple-darwin
+RUST_TARGET_windows-amd64 := x86_64-pc-windows-gnu
 
-build-darwin-amd64:
-	cd rust-cgo && cargo build --release --target x86_64-apple-darwin
-	cd cgo && CGO_ENABLED=1 GOOS=darwin GOARCH=amd64 go build .
+GOOS_linux-amd64 := linux
+GOARCH_linux-amd64 := amd64
+GOOS_linux-arm64 := linux
+GOARCH_linux-arm64 := arm64
+GOOS_darwin-amd64 := darwin
+GOARCH_darwin-amd64 := amd64
+GOOS_darwin-arm64 := darwin
+GOARCH_darwin-arm64 := arm64
+GOOS_windows-amd64 := windows
+GOARCH_windows-amd64 := amd64
 
-build-darwin-arm64:
-	cd rust-cgo && cargo build --release --target aarch64-apple-darwin
-	cd cgo && CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build .
+define BUILD_TARGET
+build-$(1):
+	cd rust-cgo && cargo build --release --target $(RUST_TARGET_$(1))
+	CGO_ENABLED=1 GOOS=$(GOOS_$(1)) GOARCH=$(GOARCH_$(1)) go build .
+endef
 
-build-windows-amd64:
-	cd rust-cgo && cargo build --release --target x86_64-pc-windows-gnu
-	cd cgo && CGO_ENABLED=1 GOOS=windows GOARCH=amd64 go build .
+$(foreach target,$(OS_ARCHES),$(eval $(call BUILD_TARGET,$(target))))
 
 # Build pre-built libraries for distribution
 build-prebuilt-libs:

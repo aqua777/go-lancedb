@@ -24,7 +24,9 @@
 package lancedb
 
 /*
+// Uncomment this to use the executable path
 #cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64 -Wl,-rpath,@executable_path
+// #cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64 
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security
 #include <stdlib.h>
 #include <stdint.h>
@@ -59,6 +61,9 @@ extern int lancedb_table_to_arrow(TableHandle, int64_t, struct ArrowArray**, str
 // Index management functions
 extern int lancedb_table_create_index(TableHandle, const char* column, const char* index_type, int metric, int num_partitions, int num_sub_vectors, bool replace);
 extern int lancedb_table_list_indices(TableHandle, char**);
+
+// Delete operations
+extern int lancedb_table_delete(TableHandle, const char* predicate);
 */
 import "C"
 import (
@@ -429,6 +434,25 @@ func (t *Table) ListIndices() ([]IndexInfo, error) {
 // parseIndicesJSON parses a JSON string into a slice of IndexInfo
 func parseIndicesJSON(jsonStr string, indices *[]IndexInfo) error {
 	return json.Unmarshal([]byte(jsonStr), indices)
+}
+
+// Delete removes rows from the table that match the given predicate.
+// The predicate is a SQL-like expression (e.g., "id > 100" or "name = 'doc1'").
+// This method automatically compacts the table to reclaim disk space.
+func (t *Table) Delete(predicate string) error {
+	if predicate == "" {
+		return &Error{Message: "predicate cannot be empty"}
+	}
+
+	cPredicate := C.CString(predicate)
+	defer C.free(unsafe.Pointer(cPredicate))
+
+	result := C.lancedb_table_delete(t.handle, cPredicate)
+	if int(result) != 0 {
+		return getLastError()
+	}
+
+	return nil
 }
 
 // Initialize the LanceDB runtime

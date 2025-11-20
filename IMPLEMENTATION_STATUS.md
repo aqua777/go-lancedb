@@ -172,19 +172,44 @@ type IndexInfo struct {
 
 ---
 
-## ❌ Not Yet Implemented (Phases 6-10)
+## ✅ Phase 6: Delete Operations - COMPLETE
 
-### Phase 6: Update and Delete Operations ❌ NOT IMPLEMENTED
+### Delete Operations ✅ COMPLETE
+
+| Task | Status | Priority | Details |
+|------|--------|----------|---------|
+| Delete rows | ✅ | Medium | Predicate-based deletion with auto-compaction |
+| Simple API | ✅ | Medium | `table.Delete("predicate")` |
+| Builder API | ✅ | Medium | `table.DeleteBuilder().Where("predicate").Execute()` |
+| Auto-compaction | ✅ | High | Automatically reclaims disk space |
+
+**Features Implemented**:
+- ✅ Simple predicate-based deletion: `table.Delete("id > 100")`
+- ✅ Builder pattern for consistency: `table.DeleteBuilder().Where("category = 'old'").Execute()`
+- ✅ SQL-like predicates (same syntax as query filters)
+- ✅ Automatic table compaction after deletion to reclaim space
+- ✅ Comprehensive test coverage (10 test cases)
+- ✅ Error handling for invalid predicates
+
+**Files Created/Modified**:
+- `rust-cgo/src/table.rs` - Added `delete_rows` and `compact` methods, C API function
+- `lancedb.go` - Added `Delete(predicate)` method
+- `delete.go` (new) - DeleteBuilder implementation
+- `delete_test.go` (new) - 10 comprehensive tests
+
+**Perfect for RAG Systems**: Document deletion for desktop applications with automatic space management.
+
+---
+
+## ❌ Not Yet Implemented (Phases 7-10)
+
+### Phase 7: Update Operations ❌ NOT IMPLEMENTED
 
 | Task | Status | Priority | Needed for RAG? |
 |------|--------|----------|-----------------|
-| Delete rows | ❌ | Medium | No (RAG is mostly read-heavy) |
 | Update rows | ❌ | Low | No (embeddings are immutable) |
 
-**Impact on RAG**: Minimal. RAG systems typically:
-- Insert new documents (✅ implemented)
-- Query existing documents (✅ implemented)
-- Rarely update/delete (workaround: recreate table)
+**Impact on RAG**: Minimal. RAG systems typically don't update embeddings (they delete and re-add instead).
 
 ---
 

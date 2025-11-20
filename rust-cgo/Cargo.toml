@@ -7,7 +7,7 @@ license = "Apache-2.0"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 lancedb = { version = "0.10.0", default-features = false }
@@ -25,3 +25,10 @@ futures = "0.3"
 
 [features]
 default = ["lancedb/default"]
+
+[profile.release]
+opt-level = "z"      # optimize for size, not speed
+lto = true           # link-time optimization
+codegen-units = 1    # better optimization, slightly slower build
+panic = "abort"      # smaller panic machinery
+strip = "symbols"    # remove symbols from the final binary (Rust 1.79+)
