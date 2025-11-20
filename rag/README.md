@@ -354,6 +354,353 @@ err := store.AddDocumentsWithEmbedding(ctx, "user123", texts, docNames, rateLimi
 - ✅ Document count limits for BM25
 - ✅ Comprehensive test coverage
 
+## Desktop Application Best Practices
+
+The RAG package is well-suited for desktop macOS applications. Here are recommended patterns for desktop use.
+
+### Basic Desktop Setup
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+    "os/signal"
+    "path/filepath"
+    "syscall"
+    
+    "github.com/aqua777/go-lancedb/rag"
+)
+
+func main() {
+    // Get application data directory
+    homeDir, _ := os.UserHomeDir()
+    appDataDir := filepath.Join(homeDir, "Library", "Application Support", "MyApp")
+    os.MkdirAll(appDataDir, 0755)
+    
+    // Initialize file-based logging
+    logger, err := rag.NewDefaultDesktopLogger("MyApp")
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
+        os.Exit(1)
+    }
+    defer logger.Close()
+    
+    // Create RAG store
+    dbPath := filepath.Join(appDataDir, "vectordb")
+    store, err := rag.NewRAGStoreWithConfig(
+        dbPath,
+        1536,  // embedding dimension
+        1000,  // batch size
+        logger,
+        rag.DefaultRetryConfig(),
+        nil,   // metrics (optional)
+    )
+    if err != nil {
+        logger.Error("Failed to create RAG store: %v", err)
+        os.Exit(1)
+    }
+    defer store.Close()
+    
+    // Validate database on startup
+    ctx := context.Background()
+    validation, err := store.ValidateDatabase(ctx, "default-user")
+    if err != nil {
+        logger.Warn("Database validation failed: %v", err)
+    } else if !validation.Valid {
+        logger.Warn("Database has issues: %v", validation.Issues)
+        // Optionally attempt repair
+        if err := store.RepairDatabase(ctx, "default-user"); err != nil {
+            logger.Error("Failed to repair database: %v", err)
+        }
+    }
+    
+    // Setup graceful shutdown
+    setupGracefulShutdown(store, logger)
+    
+    // Run your application...
+    runApp(store, logger)
+}
+
+func setupGracefulShutdown(store *rag.RAGStore, logger *rag.FileLogger) {
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+    
+    go func() {
+        <-sigChan
+        logger.Info("Shutting down gracefully...")
+        
+        // Close with timeout
+        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        
+        if err := store.CloseWithContext(ctx); err != nil {
+            logger.Error("Error during shutdown: %v", err)
+        }
+        
+        logger.Close()
+        os.Exit(0)
+    }()
+}
+
+func runApp(store *rag.RAGStore, logger *rag.FileLogger) {
+    // Your application logic here
+}
+```
+
+### Progress Reporting for UI
+
+Show progress to users during long operations:
+
+```go
+// Progress callback that updates your UI
+progressCallback := func(progress *rag.Progress) {
+    // Update progress bar
+    percentage := progress.Percent()
+    
+    // Update status message
+    message := fmt.Sprintf("%s: %d/%d (%.1f%%) - %s",
+        progress.Stage,
+        progress.Current,
+        progress.Total,
+        percentage,
+        progress.Message,
+    )
+    
+    // Estimate remaining time
+    if remaining := progress.EstimatedRemaining(); remaining > 0 {
+        message += fmt.Sprintf(" - %s remaining", remaining.Round(time.Second))
+    }
+    
+    // Update your UI (NSProgressIndicator, SwiftUI ProgressView, etc.)
+    updateUI(percentage, message)
+}
+
+// Adding documents with progress
+texts := []string{"document 1", "document 2", /* ... */}
+docNames := []string{"doc1.txt", "doc2.txt", /* ... */}
+
+err := store.AddDocumentsWithEmbeddingProgress(
+    ctx,
+    "user123",
+    texts,
+    docNames,
+    embeddingProvider,
+    progressCallback,
+)
+```
+
+### Data Backup and Export
+
+Protect user data with regular backups:
+
+```go
+// Export user data to backup file
+backupDir := filepath.Join(appDataDir, "backups")
+os.MkdirAll(backupDir, 0755)
+
+backupPath := filepath.Join(backupDir, fmt.Sprintf("backup_%s.json.gz", time.Now().Format("20060102_150405")))
+
+// Export with progress
+progressCallback := func(p *rag.Progress) {
+    fmt.Printf("Backup progress: %.1f%%\n", p.Percent())
+}
+
+err := store.ExportUserDataWithProgress(
+    ctx,
+    "user123",
+    backupPath,
+    rag.BackupFormatJSONGzip, // Compressed format
+    progressCallback,
+)
+if err != nil {
+    logger.Error("Backup failed: %v", err)
+} else {
+    logger.Info("Backup saved to %s", backupPath)
+}
+
+// Restore from backup
+err = store.ImportUserDataWithProgress(
+    ctx,
+    "user123",
+    backupPath,
+    true, // Clear existing data first
+    progressCallback,
+)
+```
+
+### Embedding Provider Setup
+
+Configure embedding provider with rate limiting and caching:
+
+```go
+// Get API key from keychain or environment
+apiKey := os.Getenv("OPENAI_API_KEY")
+
+// Create base provider
+baseProvider := rag.NewOpenAIEmbeddingProvider(
+    apiKey,
+    "text-embedding-3-small",
+    1536,
+)
+
+// Add rate limiting (10 requests/sec, burst of 20)
+rateLimited := rag.NewRateLimitedEmbeddingProvider(baseProvider, 10.0, 20)
+
+// Add caching to save API costs
+cache := rag.NewLRUEmbeddingCache(1000) // Cache 1000 queries
+cachedProvider := rag.NewCachedEmbeddingProvider(rateLimited, cache, nil)
+
+// Use the cached provider for all operations
+results, err := store.SearchWithText(ctx, "user123", "search query", cachedProvider, nil)
+```
+
+### Error Handling
+
+Handle errors gracefully for desktop users:
+
+```go
+func handleRAGError(err error, logger *rag.FileLogger) {
+    if err == nil {
+        return
+    }
+    
+    logger.Error("RAG operation failed: %v", err)
+    
+    // Check for specific error types
+    switch {
+    case strings.Contains(err.Error(), "dimension mismatch"):
+        showUserAlert("Error", "Invalid embedding dimensions. Please check your model configuration.")
+        
+    case strings.Contains(err.Error(), "rate limit"):
+        showUserAlert("Warning", "API rate limit reached. Please wait a moment and try again.")
+        
+    case strings.Contains(err.Error(), "context canceled"):
+        showUserAlert("Info", "Operation was cancelled.")
+        
+    case strings.Contains(err.Error(), "failed to open"):
+        showUserAlert("Error", "Could not access the database. Please check file permissions.")
+        
+    default:
+        showUserAlert("Error", fmt.Sprintf("An error occurred: %v", err))
+    }
+}
+
+func showUserAlert(title, message string) {
+    // Show native alert dialog (NSAlert on macOS, etc.)
+}
+```
+
+### Offline Mode Handling
+
+Detect and handle offline mode gracefully:
+
+```go
+func processDocumentsWithFallback(store *rag.RAGStore, texts []string, provider rag.EmbeddingProvider) error {
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    
+    err := store.AddDocumentsWithEmbedding(ctx, "user123", texts, docNames, provider)
+    
+    // Check for network errors
+    if err != nil && isNetworkError(err) {
+        logger.Warn("Network error detected, queuing for later processing")
+        
+        // Queue documents for processing when online
+        queueForLaterProcessing(texts)
+        
+        showUserAlert("Offline", "Documents will be processed when internet connection is restored.")
+        return nil
+    }
+    
+    return err
+}
+
+func isNetworkError(err error) bool {
+    return strings.Contains(err.Error(), "network") ||
+           strings.Contains(err.Error(), "connection") ||
+           strings.Contains(err.Error(), "timeout")
+}
+```
+
+### Performance Tips for Desktop
+
+1. **Increase BM25 limit for desktop** (Macs typically have more RAM):
+```go
+store.SetMaxDocumentsForBM25(25000) // Up from default 10,000
+```
+
+2. **Use appropriate batch sizes** for your use case:
+```go
+// For large imports, use larger batches
+store, _ := rag.NewRAGStoreWithConfig(dbPath, embeddingDim, 5000, logger, nil, nil)
+```
+
+3. **Enable debug logging during development**:
+```go
+logger.SetMinLevel(rag.LogLevelDebug)
+```
+
+4. **Monitor cache effectiveness**:
+```go
+// Check cache hit rate periodically
+cachedProvider := rag.NewCachedEmbeddingProvider(provider, cache, nil)
+
+// After some operations
+cacheSize := cachedProvider.CacheSize()
+logger.Info("Embedding cache contains %d entries", cacheSize)
+```
+
+### Troubleshooting
+
+#### Database Corruption
+
+If the database becomes corrupted:
+
+```go
+validation, err := store.ValidateDatabase(ctx, "user123")
+if err != nil || !validation.Valid {
+    // Try automatic repair
+    if err := store.RepairDatabase(ctx, "user123"); err != nil {
+        logger.Error("Auto-repair failed: %v", err)
+        
+        // Last resort: restore from backup
+        if backupPath := findLatestBackup(); backupPath != "" {
+            store.ImportUserData(ctx, "user123", backupPath, true)
+        }
+    }
+}
+```
+
+#### High Memory Usage
+
+If memory usage is high with hybrid search:
+
+```go
+// Check document count
+count, _ := store.CountDocuments(ctx, "user123")
+if count > 25000 {
+    logger.Warn("High document count (%d), consider using vector-only search", count)
+    
+    // Use regular search instead of hybrid
+    results, err := store.SearchWithText(ctx, "user123", query, provider, nil)
+}
+```
+
+#### Log File Location
+
+Logs are stored in standard macOS locations:
+- macOS: `~/Library/Logs/YourApp/rag.log`
+- Linux: `~/.local/share/YourApp/logs/rag.log`
+
+Access with:
+```go
+logger, _ := rag.NewDefaultDesktopLogger("MyApp")
+fmt.Printf("Logs: %s\n", logger.GetPath())
+```
+
 ## License
 
 Same as parent project.

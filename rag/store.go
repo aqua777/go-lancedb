@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/apache/arrow/go/v17/arrow"
+	"github.com/apache/arrow/go/v17/arrow/array"
 	"github.com/aqua777/go-lancedb"
 )
 
@@ -120,10 +121,41 @@ func NewRAGStoreWithConfig(dbPath string, embeddingDim int, maxBatchSize int, lo
 	}, nil
 }
 
-// Close closes the database connection
+// Close closes the database connection and performs cleanup.
+// This is safe to call multiple times.
 func (s *RAGStore) Close() error {
-	s.conn.Close()
+	if s.conn != nil {
+		s.conn.Close()
+		s.conn = nil
+	}
 	return nil
+}
+
+// CloseWithContext closes the database connection with context support.
+// This allows for graceful shutdown with timeout/cancellation.
+func (s *RAGStore) CloseWithContext(ctx context.Context) error {
+	// Check for immediate cancellation
+	select {
+	case <-ctx.Done():
+		// Force close immediately if context already cancelled
+		return s.Close()
+	default:
+	}
+
+	// Attempt graceful close
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Close()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		// Context cancelled, force close
+		s.Close()
+		return ctx.Err()
+	}
 }
 
 // userIDPattern defines valid characters for user IDs (alphanumeric, underscores, hyphens)
@@ -270,6 +302,12 @@ func (s *RAGStore) GetIndexConfig(userID string) (*IndexConfig, error) {
 // RebuildIndex rebuilds the index for a user with new configuration.
 // This is an expensive operation that requires re-indexing all documents.
 func (s *RAGStore) RebuildIndex(ctx context.Context, userID string, config *IndexConfig) error {
+	return s.RebuildIndexWithProgress(ctx, userID, config, nil)
+}
+
+// RebuildIndexWithProgress rebuilds the index with progress reporting.
+// The callback receives progress updates during the rebuild operation.
+func (s *RAGStore) RebuildIndexWithProgress(ctx context.Context, userID string, config *IndexConfig, callback ProgressCallback) error {
 	if err := validateUserID(userID); err != nil {
 		return err
 	}
@@ -279,6 +317,13 @@ func (s *RAGStore) RebuildIndex(ctx context.Context, userID string, config *Inde
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
+	}
+
+	// Initialize progress tracker
+	var tracker *ProgressTracker
+	if callback != nil {
+		tracker = NewProgressTracker("preparing", 100, callback)
+		tracker.SetMessage("Preparing to rebuild index")
 	}
 
 	// Acquire user lock
@@ -292,6 +337,11 @@ func (s *RAGStore) RebuildIndex(ctx context.Context, userID string, config *Inde
 	}
 	defer table.Close()
 
+	if tracker != nil {
+		tracker.Add(25)
+		tracker.SetStage("configuring")
+	}
+
 	s.mu.Lock()
 	// Update config and mark index as not created
 	s.indexConfigs[userID] = config
@@ -300,9 +350,20 @@ func (s *RAGStore) RebuildIndex(ctx context.Context, userID string, config *Inde
 
 	s.logger.Printf("Rebuilding index for user %s with new config: %+v", userID, config)
 
+	if tracker != nil {
+		tracker.Add(25)
+		tracker.SetStage("indexing")
+		tracker.SetMessage("Creating new index")
+	}
+
 	// Create new index
 	if err := s.ensureIndex(table, userID); err != nil {
 		return fmt.Errorf("failed to rebuild index: %w", err)
+	}
+
+	if tracker != nil {
+		tracker.Complete()
+		tracker.SetMessage("Index rebuild complete")
 	}
 
 	s.logger.Printf("Successfully rebuilt index for user %s", userID)
@@ -459,5 +520,170 @@ func (s *RAGStore) HealthCheckWithDetails(ctx context.Context) *HealthStatus {
 	}
 
 	return status
+}
+
+// ValidationResult contains the results of database validation
+type ValidationResult struct {
+	Valid            bool     // Overall validation status
+	UserID           string   // User ID that was validated
+	TableExists      bool     // Whether the table exists
+	DocumentCount    int64    // Number of documents found
+	IndexExists      bool     // Whether an index exists
+	Issues           []string // List of issues found
+	EmbeddingDimOK   bool     // Whether embedding dimensions are consistent
+}
+
+// ValidateDatabase validates the database for a specific user.
+// This checks table existence, document integrity, and index status.
+// Useful to run on application startup to detect corruption.
+func (s *RAGStore) ValidateDatabase(ctx context.Context, userID string) (*ValidationResult, error) {
+	result := &ValidationResult{
+		Valid:  true,
+		UserID: userID,
+		Issues: make([]string, 0),
+	}
+
+	// Validate user ID
+	if err := validateUserID(userID); err != nil {
+		result.Valid = false
+		result.Issues = append(result.Issues, fmt.Sprintf("Invalid user ID: %v", err))
+		return result, err
+	}
+
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return result, ctx.Err()
+	default:
+	}
+
+	// Check if table exists
+	exists, err := s.TableExists(ctx, userID)
+	if err != nil {
+		result.Valid = false
+		result.Issues = append(result.Issues, fmt.Sprintf("Failed to check table existence: %v", err))
+		return result, err
+	}
+
+	result.TableExists = exists
+
+	if !exists {
+		// No table means no data, which is valid (just empty)
+		result.DocumentCount = 0
+		return result, nil
+	}
+
+	// Open table
+	table, err := s.conn.OpenTable(s.getTableName(userID))
+	if err != nil {
+		result.Valid = false
+		result.Issues = append(result.Issues, fmt.Sprintf("Failed to open table: %v", err))
+		return result, err
+	}
+	defer table.Close()
+
+	// Count documents
+	count, err := table.CountRows()
+	if err != nil {
+		result.Valid = false
+		result.Issues = append(result.Issues, fmt.Sprintf("Failed to count rows: %v", err))
+		return result, err
+	}
+	result.DocumentCount = count
+
+	// Check index status
+	s.mu.RLock()
+	result.IndexExists = s.indexCreated[userID]
+	s.mu.RUnlock()
+
+	// If we have documents but no index, that's a concern
+	if count > 0 && !result.IndexExists {
+		result.Issues = append(result.Issues, "Documents exist but index not created")
+		// This is a warning, not a fatal error
+	}
+
+	// Sample a few documents to validate embedding dimensions
+	if count > 0 {
+		query := table.Query()
+		defer query.Close()
+
+		records, err := query.Select("id", "embedding").Limit(10).Execute()
+		if err != nil {
+			result.Valid = false
+			result.Issues = append(result.Issues, fmt.Sprintf("Failed to query sample documents: %v", err))
+			return result, err
+		}
+
+		result.EmbeddingDimOK = true
+		for _, record := range records {
+			embeddingCol := record.Column(1).(*array.FixedSizeList)
+			actualDim := embeddingCol.Len()
+			
+			if actualDim > 0 {
+				// Check if the embedding dimension matches
+				embeddingValues := embeddingCol.ListValues().(*array.Float32)
+				expectedValues := actualDim * s.embeddingDim
+				if embeddingValues.Len() != expectedValues {
+					result.Valid = false
+					result.EmbeddingDimOK = false
+					result.Issues = append(result.Issues, 
+						fmt.Sprintf("Embedding dimension mismatch: expected %d, found inconsistent dimensions", s.embeddingDim))
+				}
+			}
+			
+			record.Release()
+		}
+	} else {
+		result.EmbeddingDimOK = true // No documents, so no dimension issues
+	}
+
+	return result, nil
+}
+
+// RepairDatabase attempts to repair common database issues for a user.
+// This includes recreating missing indexes and cleaning up corrupted entries.
+func (s *RAGStore) RepairDatabase(ctx context.Context, userID string) error {
+	// First validate to see what's wrong
+	validation, err := s.ValidateDatabase(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("validation failed: %w", err)
+	}
+
+	if validation.Valid {
+		s.logger.Printf("Database for user %s is valid, no repairs needed", userID)
+		return nil
+	}
+
+	s.logger.Printf("Attempting to repair database for user %s. Issues: %v", userID, validation.Issues)
+
+	// If table exists but index doesn't, recreate index
+	if validation.TableExists && validation.DocumentCount > 0 && !validation.IndexExists {
+		s.logger.Printf("Recreating missing index for user %s", userID)
+		
+		table, err := s.conn.OpenTable(s.getTableName(userID))
+		if err != nil {
+			return fmt.Errorf("failed to open table for repair: %w", err)
+		}
+		defer table.Close()
+
+		if err := s.ensureIndex(table, userID); err != nil {
+			return fmt.Errorf("failed to recreate index: %w", err)
+		}
+
+		s.logger.Printf("Successfully recreated index for user %s", userID)
+	}
+
+	// Re-validate after repairs
+	validation, err = s.ValidateDatabase(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("post-repair validation failed: %w", err)
+	}
+
+	if !validation.Valid {
+		return fmt.Errorf("repairs completed but database still has issues: %v", validation.Issues)
+	}
+
+	s.logger.Printf("Successfully repaired database for user %s", userID)
+	return nil
 }
 

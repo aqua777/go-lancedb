@@ -22,6 +22,13 @@ type Document struct {
 // AddDocuments adds documents to the user's table with automatic indexing.
 // Large document sets are automatically batched to prevent memory exhaustion.
 func (s *RAGStore) AddDocuments(ctx context.Context, userID string, docs []Document) error {
+	return s.AddDocumentsWithProgress(ctx, userID, docs, nil)
+}
+
+// AddDocumentsWithProgress adds documents with progress reporting.
+// The callback receives progress updates during the operation.
+// Pass nil for callback to disable progress reporting (equivalent to AddDocuments).
+func (s *RAGStore) AddDocumentsWithProgress(ctx context.Context, userID string, docs []Document, callback ProgressCallback) error {
 	if len(docs) == 0 {
 		return fmt.Errorf("no documents to add")
 	}
@@ -39,6 +46,13 @@ func (s *RAGStore) AddDocuments(ctx context.Context, userID string, docs []Docum
 			return fmt.Errorf("document %d: embedding dimension mismatch: expected %d, got %d",
 				i, s.embeddingDim, len(doc.Embedding))
 		}
+	}
+
+	// Initialize progress tracker
+	var tracker *ProgressTracker
+	if callback != nil {
+		tracker = NewProgressTracker("validating", int64(len(docs)), callback)
+		tracker.SetStage("inserting")
 	}
 
 	// Acquire per-user lock for concurrent write protection
@@ -71,11 +85,24 @@ func (s *RAGStore) AddDocuments(ctx context.Context, userID string, docs []Docum
 		if err := s.addDocumentsBatch(table, batch); err != nil {
 			return fmt.Errorf("failed to add batch [%d:%d]: %w", batchStart, batchEnd, err)
 		}
+
+		// Update progress
+		if tracker != nil {
+			tracker.Add(int64(len(batch)))
+		}
 	}
 
 	// Ensure index exists after first insert
+	if tracker != nil {
+		tracker.SetStage("indexing")
+	}
 	if err := s.ensureIndex(table, userID); err != nil {
 		return fmt.Errorf("failed to create index: %w", err)
+	}
+
+	// Mark as complete
+	if tracker != nil {
+		tracker.Complete()
 	}
 
 	return nil
@@ -296,6 +323,12 @@ func (s *RAGStore) UpdateDocument(ctx context.Context, userID string, doc Docume
 // UpsertDocuments inserts or updates documents. If a document with the same ID exists, it's updated.
 // Otherwise, it's inserted. This is more efficient than calling UpdateDocument multiple times.
 func (s *RAGStore) UpsertDocuments(ctx context.Context, userID string, docs []Document) error {
+	return s.UpsertDocumentsWithProgress(ctx, userID, docs, nil)
+}
+
+// UpsertDocumentsWithProgress upserts documents with progress reporting.
+// The callback receives progress updates during the operation.
+func (s *RAGStore) UpsertDocumentsWithProgress(ctx context.Context, userID string, docs []Document, callback ProgressCallback) error {
 	if len(docs) == 0 {
 		return fmt.Errorf("no documents to upsert")
 	}
@@ -313,6 +346,13 @@ func (s *RAGStore) UpsertDocuments(ctx context.Context, userID string, docs []Do
 			return fmt.Errorf("document %d: embedding dimension mismatch: expected %d, got %d",
 				i, s.embeddingDim, len(doc.Embedding))
 		}
+	}
+
+	// Initialize progress tracker
+	var tracker *ProgressTracker
+	if callback != nil {
+		// Total phases: deleting + inserting + indexing
+		tracker = NewProgressTracker("deleting", int64(len(docs)), callback)
 	}
 
 	// Acquire per-user lock for write protection
@@ -347,6 +387,10 @@ func (s *RAGStore) UpsertDocuments(ctx context.Context, userID string, docs []Do
 		}
 	}
 
+	if tracker != nil {
+		tracker.SetStage("inserting")
+	}
+
 	// Insert all documents in batches
 	for batchStart := 0; batchStart < len(docs); batchStart += s.maxBatchSize {
 		// Check for context cancellation between batches
@@ -365,11 +409,23 @@ func (s *RAGStore) UpsertDocuments(ctx context.Context, userID string, docs []Do
 		if err := s.addDocumentsBatch(table, batch); err != nil {
 			return fmt.Errorf("failed to upsert batch [%d:%d]: %w", batchStart, batchEnd, err)
 		}
+
+		// Update progress
+		if tracker != nil {
+			tracker.Add(int64(len(batch)))
+		}
 	}
 
 	// Ensure index exists
+	if tracker != nil {
+		tracker.SetStage("indexing")
+	}
 	if err := s.ensureIndex(table, userID); err != nil {
 		return fmt.Errorf("failed to create index: %w", err)
+	}
+
+	if tracker != nil {
+		tracker.Complete()
 	}
 
 	return nil

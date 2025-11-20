@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	
+
 	"golang.org/x/time/rate"
 )
 
@@ -15,10 +15,10 @@ import (
 type EmbeddingProvider interface {
 	// GenerateEmbedding generates an embedding for a single text
 	GenerateEmbedding(ctx context.Context, text string) ([]float32, error)
-	
+
 	// GenerateEmbeddings generates embeddings for multiple texts (batch operation)
 	GenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error)
-	
+
 	// Dimensions returns the dimensionality of the embeddings
 	Dimensions() int
 }
@@ -205,6 +205,12 @@ func (p *HTTPEmbeddingProvider) GenerateEmbeddings(ctx context.Context, texts []
 
 // AddDocumentsWithEmbedding adds documents to the store, generating embeddings automatically
 func (s *RAGStore) AddDocumentsWithEmbedding(ctx context.Context, userID string, texts []string, documentNames []string, provider EmbeddingProvider) error {
+	return s.AddDocumentsWithEmbeddingProgress(ctx, userID, texts, documentNames, provider, nil)
+}
+
+// AddDocumentsWithEmbeddingProgress adds documents with automatic embedding generation and progress reporting.
+// The callback receives progress updates for both embedding generation and document insertion.
+func (s *RAGStore) AddDocumentsWithEmbeddingProgress(ctx context.Context, userID string, texts []string, documentNames []string, provider EmbeddingProvider, callback ProgressCallback) error {
 	if len(texts) == 0 {
 		return fmt.Errorf("no texts to add")
 	}
@@ -216,6 +222,12 @@ func (s *RAGStore) AddDocumentsWithEmbedding(ctx context.Context, userID string,
 	if provider.Dimensions() != s.embeddingDim {
 		return fmt.Errorf("provider embedding dimension (%d) does not match store dimension (%d)",
 			provider.Dimensions(), s.embeddingDim)
+	}
+
+	// Initialize progress tracker for embedding generation
+	var tracker *ProgressTracker
+	if callback != nil {
+		tracker = NewProgressTracker("generating_embeddings", int64(len(texts)), callback)
 	}
 
 	// Generate embeddings in batches to avoid overwhelming the provider
@@ -251,10 +263,31 @@ func (s *RAGStore) AddDocumentsWithEmbedding(ctx context.Context, userID string,
 				Metadata:     map[string]interface{}{},
 			})
 		}
+
+		// Update progress for embedding generation
+		if tracker != nil {
+			tracker.Add(int64(len(batch)))
+		}
 	}
 
-	// Add all documents
-	return s.AddDocuments(ctx, userID, docs)
+	// Now add all documents with progress reporting
+	if tracker != nil {
+		tracker.SetStage("inserting_documents")
+	}
+
+	// Use the progress-aware version of AddDocuments
+	// We'll create a wrapper callback that updates our tracker
+	var insertCallback ProgressCallback
+	if callback != nil {
+		insertCallback = func(p *Progress) {
+			// Forward the progress but keep our original start time
+			progress := *p
+			progress.StartTime = tracker.progress.StartTime
+			callback(&progress)
+		}
+	}
+
+	return s.AddDocumentsWithProgress(ctx, userID, docs, insertCallback)
 }
 
 // SearchWithText performs a search using text query instead of pre-computed embedding
@@ -299,7 +332,7 @@ func (p *RateLimitedEmbeddingProvider) GenerateEmbedding(ctx context.Context, te
 	if err := p.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
 	}
-	
+
 	return p.provider.GenerateEmbedding(ctx, text)
 }
 
@@ -310,7 +343,6 @@ func (p *RateLimitedEmbeddingProvider) GenerateEmbeddings(ctx context.Context, t
 	if err := p.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
 	}
-	
+
 	return p.provider.GenerateEmbeddings(ctx, texts)
 }
-
