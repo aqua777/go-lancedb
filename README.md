@@ -302,6 +302,37 @@ results, err := table.Query().
     Execute()
 ```
 
+### 8. Deleting Data
+
+LanceDB Go bindings support two styles for deleting rows:
+
+```go
+// Simple delete with predicate
+err := table.Delete("id > 100")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Builder pattern (consistent with Query API)
+err := table.DeleteBuilder().Where("category = 'outdated'").Execute()
+if err != nil {
+    log.Fatal(err)
+}
+
+// Delete by document name (useful for RAG systems)
+err := table.Delete("text = 'old document'")
+
+// Complex predicates
+err := table.Delete("score < 0.5 AND category IN ('spam', 'junk')")
+```
+
+**Important Notes**:
+- Deletions use SQL-like predicates (same syntax as `Where()` in queries)
+- The table is automatically compacted after deletion to reclaim disk space
+- Both API styles perform the same operation - choose based on your preference
+- Use simple `Delete(predicate)` for quick one-liners
+- Use `DeleteBuilder()` for consistency with other builder patterns
+
 ## API Reference
 
 ### Connection
@@ -332,6 +363,7 @@ func (t *Table) Add(record arrow.Record, mode AddMode) error
 func (t *Table) CountRows() (int64, error)
 func (t *Table) Schema() (*arrow.Schema, error)
 func (t *Table) ToArrow(limit int64) ([]arrow.Record, error)
+func (t *Table) Delete(predicate string) error
 
 // Indexing
 func (t *Table) CreateIndex(column string, opts *IndexOptions) error
@@ -339,9 +371,22 @@ func (t *Table) ListIndices() ([]IndexInfo, error)
 
 // Querying
 func (t *Table) Query() *Query
+func (t *Table) DeleteBuilder() *DeleteBuilder
 
 // Lifecycle
 func (t *Table) Close()
+```
+
+### DeleteBuilder
+
+```go
+type DeleteBuilder struct { /* ... */ }
+
+// Configuration
+func (d *DeleteBuilder) Where(predicate string) *DeleteBuilder
+
+// Execution
+func (d *DeleteBuilder) Execute() error
 ```
 
 ### Query Builder
@@ -415,8 +460,8 @@ const (
 | Vector indices | ✅ | IVF-PQ indexing |
 | Index management | ✅ | Create and list indices |
 | Arrow C FFI | ✅ | Zero-copy data transfer |
+| Delete operations | ✅ | Predicate-based deletion with auto-compaction |
 | Update operations | ❌ | Not implemented yet |
-| Delete operations | ❌ | Not implemented yet |
 | Full-text search | ❌ | Not implemented yet |
 | Remote databases | ❌ | LanceDB Cloud support pending |
 

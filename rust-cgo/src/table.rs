@@ -125,6 +125,23 @@ impl TableHandle {
         let indices = RT.block_on(self.inner.list_indices())?;
         Ok(indices)
     }
+
+    /// Delete rows matching a predicate
+    pub fn delete_rows(&self, predicate: &str) -> Result<()> {
+        RT.block_on(self.inner.delete(predicate))?;
+        Ok(())
+    }
+
+    /// Optimize the table to reclaim space after deletions
+    pub fn compact(&self) -> Result<()> {
+        use lancedb::table::{OptimizeAction, CompactionOptions};
+        let options = CompactionOptions::default();
+        RT.block_on(self.inner.optimize(OptimizeAction::Compact { 
+            options,
+            remap_options: None,
+        }))?;
+        Ok(())
+    }
 }
 
 // C API for tables
@@ -594,4 +611,52 @@ pub extern "C" fn lancedb_table_list_indices(
     }
 
     indices.len() as c_int
+}
+
+/// Delete rows from a table based on a predicate.
+/// Returns 0 on success, -1 on failure.
+///
+/// # Parameters
+/// * `handle` - The table handle
+/// * `predicate` - SQL-like predicate string (e.g., "id > 100" or "name = 'doc1'")
+#[no_mangle]
+pub extern "C" fn lancedb_table_delete(
+    handle: *const TableHandle,
+    predicate: *const c_char,
+) -> c_int {
+    if handle.is_null() || predicate.is_null() {
+        let error_msg = "table handle and predicate cannot be null";
+        let c_error = CString::new(error_msg).unwrap();
+        crate::lancedb_set_last_error(c_error.as_ptr());
+        return -1;
+    }
+
+    let table = unsafe { &*handle };
+    let predicate_str = match unsafe { CStr::from_ptr(predicate) }.to_str() {
+        Ok(s) => s,
+        Err(err) => {
+            let error_msg = format!("invalid UTF-8 in predicate: {}", err);
+            let c_error = CString::new(error_msg).unwrap();
+            crate::lancedb_set_last_error(c_error.as_ptr());
+            return -1;
+        }
+    };
+
+    // Delete the rows
+    if let Err(err) = table.delete_rows(predicate_str) {
+        let error_msg = format!("delete failed: {}", err);
+        let c_error = CString::new(error_msg).unwrap();
+        crate::lancedb_set_last_error(c_error.as_ptr());
+        return -1;
+    }
+
+    // Automatically compact to reclaim space
+    if let Err(err) = table.compact() {
+        let error_msg = format!("compaction failed: {}", err);
+        let c_error = CString::new(error_msg).unwrap();
+        crate::lancedb_set_last_error(c_error.as_ptr());
+        return -1;
+    }
+
+    0
 }

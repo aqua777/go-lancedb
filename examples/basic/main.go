@@ -339,9 +339,38 @@ func main() {
 	fmt.Println()
 
 	// ========================================
-	// 10. DIFFERENT DISTANCE METRICS
+	// 10. DELETE OPERATIONS
 	// ========================================
-	fmt.Println("📏 Step 10: Comparing different distance metrics")
+	fmt.Println("🗑️  Step 10: Delete operations (document management)")
+
+	countBefore, _ := table.CountRows()
+	fmt.Printf("   Documents before deletion: %d\n", countBefore)
+
+	// Simple delete - remove documents with low views
+	fmt.Println("\n   Deleting documents with views < 5000...")
+	if err := table.Delete("views < 5000"); err != nil {
+		log.Fatalf("Failed to delete: %v", err)
+	}
+
+	countAfter1, _ := table.CountRows()
+	fmt.Printf("   Documents after simple delete: %d (deleted %d)\n", countAfter1, countBefore-countAfter1)
+
+	// Builder pattern delete - remove specific category
+	fmt.Println("\n   Deleting 'entertainment' category documents...")
+	if err := table.DeleteBuilder().Where("category = 'entertainment'").Execute(); err != nil {
+		log.Fatalf("Failed to delete with builder: %v", err)
+	}
+
+	countAfter2, _ := table.CountRows()
+	fmt.Printf("   Documents after builder delete: %d (deleted %d)\n", countAfter2, countAfter1-countAfter2)
+	fmt.Printf("   Total deleted: %d documents\n", countBefore-countAfter2)
+	fmt.Println("   ✓ Space automatically reclaimed via compaction")
+	fmt.Println()
+
+	// ========================================
+	// 11. DIFFERENT DISTANCE METRICS
+	// ========================================
+	fmt.Println("📏 Step 11: Comparing different distance metrics")
 
 	metrics := []struct {
 		name   string
@@ -381,9 +410,9 @@ func main() {
 	fmt.Println()
 
 	// ========================================
-	// 11. TABLE STATISTICS
+	// 12. TABLE STATISTICS
 	// ========================================
-	fmt.Println("📊 Step 11: Table statistics")
+	fmt.Println("📊 Step 12: Table statistics")
 
 	finalCount, _ := table.CountRows()
 	finalSchema, _ := table.Schema()
@@ -410,6 +439,8 @@ func main() {
 	fmt.Println("  ✓ Index listing & management")
 	fmt.Println("  ✓ Indexed vector search (faster)")
 	fmt.Println("  ✓ Filtered vector search (hybrid)")
+	fmt.Println("  ✓ Delete operations (simple & builder pattern)")
+	fmt.Println("  ✓ Automatic space compaction")
 	fmt.Println("  ✓ Multiple distance metrics")
 	fmt.Println("  ✓ Column projection (SELECT)")
 	fmt.Println("  ✓ Query builder API")

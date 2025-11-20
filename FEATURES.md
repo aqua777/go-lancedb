@@ -93,6 +93,19 @@ Complete Go bindings for LanceDB using CGO, providing full vector database capab
   - List all indices
   - Index metadata (name, type, columns)
 
+### ✅ Phase 6: Delete Operations
+- **Simple Delete API**
+  - Predicate-based deletion: `table.Delete("id > 100")`
+  - SQL-like predicate syntax
+  - Automatic space reclamation
+- **Builder Pattern API**
+  - Fluent interface: `table.DeleteBuilder().Where("category = 'old'").Execute()`
+  - Consistent with Query API
+- **Auto-compaction**
+  - Automatically compacts table after deletion
+  - Reclaims disk space without user intervention
+  - Perfect for desktop applications
+
 ## API Examples
 
 ### Basic Connection and Table Creation
@@ -212,9 +225,37 @@ for _, idx := range indices {
 }
 ```
 
+### Delete Operations
+
+```go
+// Simple delete with predicate
+err = table.Delete("id > 100")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Builder pattern (consistent with Query API)
+err = table.DeleteBuilder().Where("category = 'outdated'").Execute()
+if err != nil {
+    log.Fatal(err)
+}
+
+// Delete documents by name (useful for RAG systems)
+err = table.Delete("text = 'old document'")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Complex predicates
+err = table.Delete("score < 0.5 AND category IN ('spam', 'junk')")
+if err != nil {
+    log.Fatal(err)
+}
+```
+
 ## Test Coverage
 
-**42 comprehensive tests, 100% passing**
+**52 comprehensive tests, 100% passing**
 
 ### Test Categories
 - Connection management (7 tests)
@@ -222,6 +263,7 @@ for _, idx := range indices {
 - Data operations (9 tests)
 - Query operations (6 tests)
 - Index management (6 tests)
+- Delete operations (10 tests)
 - Integration tests (9 tests)
 
 ### Test Files
@@ -230,6 +272,7 @@ for _, idx := range indices {
 - `data_test.go` - Data operations
 - `query_test.go` - Query builder
 - `index_test.go` - Index management
+- `delete_test.go` - Delete operations
 
 ## Performance Characteristics
 
@@ -346,7 +389,8 @@ go run main.go
 - [ ] Full-text search support
 - [ ] Streaming API
 - [ ] Merge insert operations
-- [ ] Update/delete operations
+- [x] Delete operations (✅ COMPLETE)
+- [ ] Update operations
 - [ ] Remote database support (LanceDB Cloud)
 
 ## Contributing
