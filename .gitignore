@@ -1,3 +1,6 @@
+.DS_Store
+.vscode/
+
 # this shold allow to keep files in this location but exclude them from the git status
 **/*.not-*
 
