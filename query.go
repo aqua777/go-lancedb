@@ -5,10 +5,35 @@ package lancedb
 
 /*
 #include <stdlib.h>
+#include <stdint.h>
 
-// Forward declarations from other CGO files
-struct ArrowArray;
-struct ArrowSchema;
+// Arrow C Data Interface structures
+// See: https://arrow.apache.org/docs/format/CDataInterface.html
+
+struct ArrowSchema {
+    const char* format;
+    const char* name;
+    const char* metadata;
+    int64_t flags;
+    int64_t n_children;
+    struct ArrowSchema** children;
+    struct ArrowSchema* dictionary;
+    void (*release)(struct ArrowSchema*);
+    void* private_data;
+};
+
+struct ArrowArray {
+    int64_t length;
+    int64_t null_count;
+    int64_t offset;
+    int64_t n_buffers;
+    int64_t n_children;
+    const void** buffers;
+    struct ArrowArray** children;
+    struct ArrowArray* dictionary;
+    void (*release)(struct ArrowArray*);
+    void* private_data;
+};
 
 typedef void* QueryHandle;
 typedef void* TableHandle;
@@ -22,6 +47,11 @@ extern int lancedb_query_offset(QueryHandle, int);
 extern int lancedb_query_filter(QueryHandle, const char*);
 extern int lancedb_query_select(QueryHandle, char**, int);
 extern int lancedb_query_execute(QueryHandle, struct ArrowArray**, struct ArrowSchema**, int*);
+
+typedef void* QueryStreamHandle;
+extern QueryStreamHandle lancedb_query_execute_stream(QueryHandle);
+extern int lancedb_stream_next(QueryStreamHandle, struct ArrowArray*, struct ArrowSchema*);
+extern void lancedb_stream_close(QueryStreamHandle);
 */
 import "C"
 import (
@@ -47,13 +77,24 @@ const (
 type Query struct {
 	handle C.QueryHandle
 	table  *Table // Keep reference to prevent GC
+	err    error  // Capture errors during builder chain
 }
 
 // Query creates a new query for the table
 func (t *Table) Query() *Query {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return &Query{err: &Error{Message: "table is closed"}}
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	handle := C.lancedb_query_new(C.TableHandle(t.handle))
 	if handle == nil {
-		return nil
+		return &Query{err: getLastError()}
 	}
 
 	q := &Query{handle: handle, table: t}
@@ -64,6 +105,8 @@ func (t *Table) Query() *Query {
 // Close releases the query resources
 func (q *Query) Close() {
 	if q.handle != nil {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		C.lancedb_query_close(q.handle)
 		q.handle = nil
 	}
@@ -71,42 +114,70 @@ func (q *Query) Close() {
 
 // NearestTo sets the query vector for nearest neighbor search
 // vector: the query vector to search for
+// NearestTo sets the query vector for nearest neighbor search
+// vector: the query vector to search for
 func (q *Query) NearestTo(vector []float32) *Query {
+	if q.err != nil {
+		return q
+	}
 	if len(vector) == 0 {
 		return q
 	}
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_query_nearest_to(q.handle, (*C.float)(unsafe.Pointer(&vector[0])), C.int(len(vector)))
 	if int(result) != 0 {
-		// Error occurred, but we can't return it here in fluent API
-		// The error will be caught on Execute()
+		q.err = getLastError()
 	}
 	return q
 }
 
 // DistanceType sets the distance metric for the query
 func (q *Query) SetDistanceType(dt DistanceType) *Query {
+	if q.err != nil {
+		return q
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_query_distance_type(q.handle, C.int(dt))
 	if int(result) != 0 {
-		// Error occurred, but we can't return it here in fluent API
+		q.err = getLastError()
 	}
 	return q
 }
 
 // Limit sets the maximum number of results to return
 func (q *Query) Limit(limit int) *Query {
+	if q.err != nil {
+		return q
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_query_limit(q.handle, C.int(limit))
 	if int(result) != 0 {
-		// Error occurred, but we can't return it here in fluent API
+		q.err = getLastError()
 	}
 	return q
 }
 
 // Offset sets the number of results to skip
 func (q *Query) Offset(offset int) *Query {
+	if q.err != nil {
+		return q
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_query_offset(q.handle, C.int(offset))
 	if int(result) != 0 {
-		// Error occurred, but we can't return it here in fluent API
+		q.err = getLastError()
 	}
 	return q
 }
@@ -114,18 +185,28 @@ func (q *Query) Offset(offset int) *Query {
 // Where sets a filter predicate for the query
 // filter: SQL-like filter expression, e.g., "price > 100 AND category = 'electronics'"
 func (q *Query) Where(filter string) *Query {
+	if q.err != nil {
+		return q
+	}
+
 	cFilter := C.CString(filter)
 	defer C.free(unsafe.Pointer(cFilter))
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_query_filter(q.handle, cFilter)
 	if int(result) != 0 {
-		// Error occurred, but we can't return it here in fluent API
+		q.err = getLastError()
 	}
 	return q
 }
 
 // Select specifies which columns to return in the results
 func (q *Query) Select(columns ...string) *Query {
+	if q.err != nil {
+		return q
+	}
 	if len(columns) == 0 {
 		return q
 	}
@@ -137,18 +218,28 @@ func (q *Query) Select(columns ...string) *Query {
 		defer C.free(unsafe.Pointer(cColumns[i]))
 	}
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_query_select(q.handle, &cColumns[0], C.int(len(columns)))
 	if int(result) != 0 {
-		// Error occurred, but we can't return it here in fluent API
+		q.err = getLastError()
 	}
 	return q
 }
 
 // Execute runs the query and returns the results
 func (q *Query) Execute() ([]arrow.Record, error) {
+	if q.err != nil {
+		return nil, q.err
+	}
+
 	var cArrays *C.struct_ArrowArray
 	var cSchemas *C.struct_ArrowSchema
 	var count C.int
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	result := C.lancedb_query_execute(q.handle, &cArrays, &cSchemas, &count)
 	if int(result) != 0 {
@@ -186,3 +277,85 @@ func (q *Query) Execute() ([]arrow.Record, error) {
 	return records, nil
 }
 
+// RecordIterator iterates over query results
+type RecordIterator interface {
+	Next() (arrow.Record, error)
+	Close()
+}
+
+type streamIterator struct {
+	handle C.QueryStreamHandle
+	conn   *Connection // Keep reference
+}
+
+func (it *streamIterator) Next() (arrow.Record, error) {
+	if it.handle == nil {
+		return nil, nil
+	}
+
+	// Allocate C structures for one batch
+	cArray := (*C.struct_ArrowArray)(C.malloc(C.sizeof_struct_ArrowArray))
+	cSchema := (*C.struct_ArrowSchema)(C.malloc(C.sizeof_struct_ArrowSchema))
+
+	if cArray == nil || cSchema == nil {
+		if cArray != nil {
+			C.free(unsafe.Pointer(cArray))
+		}
+		if cSchema != nil {
+			C.free(unsafe.Pointer(cSchema))
+		}
+		return nil, &Error{Message: "failed to allocate Arrow C structures"}
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	result := C.lancedb_stream_next(it.handle, cArray, cSchema)
+	if int(result) < 0 {
+		C.free(unsafe.Pointer(cArray))
+		C.free(unsafe.Pointer(cSchema))
+		return nil, getLastError()
+	}
+
+	if int(result) == 0 {
+		// End of stream
+		C.free(unsafe.Pointer(cArray))
+		C.free(unsafe.Pointer(cSchema))
+		return nil, nil
+	}
+
+	record, err := RecordFromC(cArray, cSchema)
+	if err != nil {
+		return nil, err
+	}
+
+	return record, nil
+}
+
+func (it *streamIterator) Close() {
+	if it.handle != nil {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		C.lancedb_stream_close(it.handle)
+		it.handle = nil
+	}
+}
+
+// ExecuteStreaming runs the query and returns an iterator
+func (q *Query) ExecuteStreaming() (RecordIterator, error) {
+	if q.err != nil {
+		return nil, q.err
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	handle := C.lancedb_query_execute_stream(q.handle)
+	if handle == nil {
+		return nil, getLastError()
+	}
+
+	it := &streamIterator{handle: handle, conn: q.table.conn}
+	runtime.SetFinalizer(it, (*streamIterator).Close)
+	return it, nil
+}

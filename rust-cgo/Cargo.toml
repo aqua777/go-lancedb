@@ -22,6 +22,7 @@ serde = { version = "^1" }
 serde_json = { version = "1" }
 libc = "0.2"
 futures = "0.3"
+chrono = "=0.4.38"
 
 [features]
 default = ["lancedb/default"]

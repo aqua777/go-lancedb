@@ -26,7 +26,7 @@ package lancedb
 /*
 // Uncomment this to use the executable path
 #cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64 -Wl,-rpath,@executable_path
-// #cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64 
+// #cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security
 #include <stdlib.h>
 #include <stdint.h>
@@ -69,6 +69,7 @@ import "C"
 import (
 	"encoding/json"
 	"runtime"
+	"sync"
 	"unsafe"
 
 	"github.com/apache/arrow/go/v17/arrow"
@@ -95,6 +96,7 @@ func getLastError() error {
 
 // Connection represents a connection to a LanceDB database
 type Connection struct {
+	mu     sync.RWMutex
 	handle C.ConnectionHandle
 }
 
@@ -102,6 +104,9 @@ type Connection struct {
 func Connect(uri string) (*Connection, error) {
 	cURI := C.CString(uri)
 	defer C.free(unsafe.Pointer(cURI))
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	handle := C.lancedb_connect(cURI)
 	if handle == nil {
@@ -115,7 +120,12 @@ func Connect(uri string) (*Connection, error) {
 
 // Close closes the database connection
 func (c *Connection) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.handle != nil {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		C.lancedb_connection_close(c.handle)
 		c.handle = nil
 	}
@@ -123,8 +133,18 @@ func (c *Connection) Close() {
 
 // TableNames returns a list of table names in the database
 func (c *Connection) TableNames() ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.handle == nil {
+		return nil, &Error{Message: "connection is closed"}
+	}
+
 	var cNames **C.char
 	var count C.int
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	result := C.lancedb_connection_table_names(c.handle, nil, 0, &cNames, &count)
 	if int(result) != 0 {
@@ -149,14 +169,25 @@ func (c *Connection) TableNames() ([]string, error) {
 
 // Table represents a LanceDB table
 type Table struct {
+	mu     sync.RWMutex
 	handle C.TableHandle
 	conn   *Connection // Keep reference to prevent GC
 }
 
 // OpenTable opens an existing table
 func (c *Connection) OpenTable(name string) (*Table, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.handle == nil {
+		return nil, &Error{Message: "connection is closed"}
+	}
+
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	handle := C.lancedb_table_open(c.handle, cName)
 	if handle == nil {
@@ -170,8 +201,18 @@ func (c *Connection) OpenTable(name string) (*Table, error) {
 
 // CreateTable creates a new table with a default schema
 func (c *Connection) CreateTable(name string) (*Table, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.handle == nil {
+		return nil, &Error{Message: "connection is closed"}
+	}
+
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	handle := C.lancedb_table_create(c.handle, cName)
 	if handle == nil {
@@ -185,6 +226,13 @@ func (c *Connection) CreateTable(name string) (*Table, error) {
 
 // CreateTableWithSchema creates a new table with a custom schema
 func (c *Connection) CreateTableWithSchema(name string, schema *arrow.Schema) (*Table, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.handle == nil {
+		return nil, &Error{Message: "connection is closed"}
+	}
+
 	if schema == nil {
 		return nil, &Error{Message: "schema cannot be nil"}
 	}
@@ -199,6 +247,9 @@ func (c *Connection) CreateTableWithSchema(name string, schema *arrow.Schema) (*
 	}
 	defer ReleaseArrowSchema(cSchema)
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	handle := C.lancedb_table_create_with_schema(c.handle, cName, cSchema)
 	if handle == nil {
 		return nil, getLastError()
@@ -211,7 +262,12 @@ func (c *Connection) CreateTableWithSchema(name string, schema *arrow.Schema) (*
 
 // Close closes the table
 func (t *Table) Close() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	if t.handle != nil {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
 		C.lancedb_table_close(t.handle)
 		t.handle = nil
 	}
@@ -219,6 +275,16 @@ func (t *Table) Close() {
 
 // CountRows returns the number of rows in the table
 func (t *Table) CountRows() (int64, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return 0, &Error{Message: "table is closed"}
+	}
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	count := C.lancedb_table_count_rows(t.handle)
 	if count == -1 {
 		return 0, getLastError()
@@ -238,6 +304,13 @@ const (
 
 // Add inserts a RecordBatch into the table
 func (t *Table) Add(record arrow.Record, mode AddMode) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return &Error{Message: "table is closed"}
+	}
+
 	if record == nil {
 		return &Error{Message: "record cannot be nil"}
 	}
@@ -250,6 +323,9 @@ func (t *Table) Add(record arrow.Record, mode AddMode) error {
 	defer ReleaseArrowArray(cArray)
 	defer ReleaseArrowSchema(cSchema)
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_table_add(t.handle, cArray, cSchema, C.int(mode))
 	if int(result) != 0 {
 		return getLastError()
@@ -260,6 +336,13 @@ func (t *Table) Add(record arrow.Record, mode AddMode) error {
 
 // Schema returns the Arrow schema of the table
 func (t *Table) Schema() (*arrow.Schema, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return nil, &Error{Message: "table is closed"}
+	}
+
 	// We need to use the struct type from the C import block in arrow.go
 	// For now, we'll create a temp schema C structure
 	cSchema := (*C.struct_ArrowSchema)(C.malloc(C.size_t(unsafe.Sizeof(C.struct_ArrowSchema{}))))
@@ -267,6 +350,9 @@ func (t *Table) Schema() (*arrow.Schema, error) {
 		return nil, &Error{Message: "failed to allocate schema structure"}
 	}
 	defer C.free(unsafe.Pointer(cSchema))
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	result := C.lancedb_table_schema(t.handle, cSchema)
 	if int(result) != 0 {
@@ -284,9 +370,19 @@ func (t *Table) Schema() (*arrow.Schema, error) {
 // ToArrow reads all data from the table and returns it as Arrow RecordBatch slices
 // limit: maximum number of rows to read (-1 for no limit)
 func (t *Table) ToArrow(limit int64) ([]arrow.Record, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return nil, &Error{Message: "table is closed"}
+	}
+
 	var cArrays *C.struct_ArrowArray
 	var cSchemas *C.struct_ArrowSchema
 	var count C.int
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	result := C.lancedb_table_to_arrow(t.handle, C.int64_t(limit), &cArrays, &cSchemas, &count)
 	if int(result) != 0 {
@@ -369,6 +465,13 @@ type IndexInfo struct {
 
 // CreateIndex creates an index on the specified column
 func (t *Table) CreateIndex(column string, opts *IndexOptions) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return &Error{Message: "table is closed"}
+	}
+
 	if opts == nil {
 		opts = &IndexOptions{
 			IndexType:     IndexTypeIVFPQ,
@@ -390,6 +493,9 @@ func (t *Table) CreateIndex(column string, opts *IndexOptions) error {
 	cIndexType := C.CString(string(opts.IndexType))
 	defer C.free(unsafe.Pointer(cIndexType))
 
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_table_create_index(
 		t.handle,
 		cColumn,
@@ -409,7 +515,18 @@ func (t *Table) CreateIndex(column string, opts *IndexOptions) error {
 
 // ListIndices returns a list of all indices on the table
 func (t *Table) ListIndices() ([]IndexInfo, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return nil, &Error{Message: "table is closed"}
+	}
+
 	var cJSON *C.char
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	result := C.lancedb_table_list_indices(t.handle, &cJSON)
 	if int(result) < 0 {
 		return nil, getLastError()
@@ -440,12 +557,22 @@ func parseIndicesJSON(jsonStr string, indices *[]IndexInfo) error {
 // The predicate is a SQL-like expression (e.g., "id > 100" or "name = 'doc1'").
 // This method automatically compacts the table to reclaim disk space.
 func (t *Table) Delete(predicate string) error {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.handle == nil {
+		return &Error{Message: "table is closed"}
+	}
+
 	if predicate == "" {
 		return &Error{Message: "predicate cannot be empty"}
 	}
 
 	cPredicate := C.CString(predicate)
 	defer C.free(unsafe.Pointer(cPredicate))
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
 	result := C.lancedb_table_delete(t.handle, cPredicate)
 	if int(result) != 0 {
