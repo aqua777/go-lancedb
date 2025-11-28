@@ -24,9 +24,8 @@
 package lancedb
 
 /*
-// Uncomment this to use the executable path
-#cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64 -Wl,-rpath,@executable_path
-// #cgo LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/libs/darwin-arm64 -L${SRCDIR}/rust-cgo/target/release -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/darwin-arm64
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/libs/linux-arm64 -llancedb_cgo -lm -ldl -Wl,-rpath,${SRCDIR}/libs/linux-arm64
 #cgo darwin LDFLAGS: -framework CoreFoundation -framework Security
 #include <stdlib.h>
 #include <stdint.h>
