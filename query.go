@@ -283,6 +283,7 @@ type RecordIterator interface {
 	Close()
 }
 
+
 type streamIterator struct {
 	handle C.QueryStreamHandle
 	conn   *Connection // Keep reference
@@ -359,3 +360,4 @@ func (q *Query) ExecuteStreaming() (RecordIterator, error) {
 	runtime.SetFinalizer(it, (*streamIterator).Close)
 	return it, nil
 }
+
