@@ -1,0 +1,45 @@
+{
+    "name": "Go-Lancedb",
+    "build": {
+        "dockerfile": "../.docker/Dev.dockerfile",
+        "context": "..",
+        "target": "devcontainer",
+        "args": {
+            "GO_USER_NAME": "dev"
+        }
+    },
+    "workspaceMount": "source=${localWorkspaceFolder},target=/ws,type=bind,consistency=cached",
+    "workspaceFolder": "/ws",
+    "remoteUser": "dev",
+    "updateRemoteUserUID": true,
+    // "overrideCommand": false,
+    "mounts": [
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "golang.go",
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.makefile-tools"
+            ]
+        },
+        "settings": {
+            "files.autoSave": "afterDelay",
+            "files.autoSaveDelay": 50
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/common-utils:2": {
+            "installZsh": true,
+            "configureZshAsDefaultShell": true,
+            "installOhMyZsh": true
+        }
+    },
+    "forwardPorts": [
+
+    ],
+    "containerEnv": {
+        "CGO_LDFLAGS_ALLOW": "-Wl,-rpath,@executable_path",
+        "PATH": "/opt/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
+    }
+}

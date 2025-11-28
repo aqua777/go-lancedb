@@ -7,6 +7,8 @@ use std::os::raw::{c_char, c_float, c_int};
 use arrow::ffi::FFI_ArrowArray;
 use arrow::ffi::FFI_ArrowSchema;
 use arrow_array::RecordBatch;
+use futures::stream::BoxStream;
+use futures::StreamExt;
 
 use crate::arrow_ffi::export_record_batch_to_c;
 use crate::error::Result;
@@ -120,6 +122,18 @@ impl QueryHandle {
         })?;
         Ok(batches)
     }
+
+    pub fn execute_stream(&self) -> Result<BoxStream<'static, lancedb::Result<RecordBatch>>> {
+        let stream = match self {
+            QueryHandle::Plain(q) => RT.block_on(q.execute())?,
+            QueryHandle::Vector(q) => RT.block_on(q.execute())?,
+        };
+        Ok(stream)
+    }
+}
+
+pub struct QueryStreamHandle {
+    stream: BoxStream<'static, lancedb::Result<RecordBatch>>,
 }
 
 // C API for queries
@@ -449,4 +463,80 @@ pub extern "C" fn lancedb_query_execute(
     }
 
     0
+}
+
+/// Execute the query and return a stream handle.
+/// Returns a pointer to QueryStreamHandle on success, null on failure.
+#[no_mangle]
+pub extern "C" fn lancedb_query_execute_stream(handle: *const QueryHandle) -> *mut QueryStreamHandle {
+    if handle.is_null() {
+        let error_msg = "handle cannot be null";
+        let c_error = CString::new(error_msg).unwrap();
+        crate::lancedb_set_last_error(c_error.as_ptr());
+        return std::ptr::null_mut();
+    }
+
+    let query = unsafe { &*handle };
+
+    let stream = match query.execute_stream() {
+        Ok(s) => s,
+        Err(err) => {
+            let error_msg = format!("{}", err);
+            let c_error = CString::new(error_msg).unwrap();
+            crate::lancedb_set_last_error(c_error.as_ptr());
+            return std::ptr::null_mut();
+        }
+    };
+
+    let handle = QueryStreamHandle { stream };
+    Box::into_raw(Box::new(handle))
+}
+
+/// Get the next batch from the stream.
+/// Returns 1 if a batch was returned, 0 if stream ended, -1 on error.
+#[no_mangle]
+pub extern "C" fn lancedb_stream_next(
+    handle: *mut QueryStreamHandle,
+    array_out: *mut FFI_ArrowArray,
+    schema_out: *mut FFI_ArrowSchema,
+) -> c_int {
+    if handle.is_null() || array_out.is_null() || schema_out.is_null() {
+        let error_msg = "handle, array_out, and schema_out cannot be null";
+        let c_error = CString::new(error_msg).unwrap();
+        crate::lancedb_set_last_error(c_error.as_ptr());
+        return -1;
+    }
+
+    let stream_handle = unsafe { &mut *handle };
+
+    let next_item = RT.block_on(async { stream_handle.stream.next().await });
+
+    match next_item {
+        Some(Ok(batch)) => {
+            if let Err(err) = unsafe { export_record_batch_to_c(&batch, array_out, schema_out) } {
+                let error_msg = format!("{}", err);
+                let c_error = CString::new(error_msg).unwrap();
+                crate::lancedb_set_last_error(c_error.as_ptr());
+                return -1;
+            }
+            1
+        }
+        Some(Err(err)) => {
+            let error_msg = format!("{}", err);
+            let c_error = CString::new(error_msg).unwrap();
+            crate::lancedb_set_last_error(c_error.as_ptr());
+            -1
+        }
+        None => 0,
+    }
+}
+
+/// Close the stream and free resources.
+#[no_mangle]
+pub extern "C" fn lancedb_stream_close(handle: *mut QueryStreamHandle) {
+    if !handle.is_null() {
+        unsafe {
+            let _ = Box::from_raw(handle);
+        }
+    }
 }

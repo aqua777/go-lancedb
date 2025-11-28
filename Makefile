@@ -1,4 +1,5 @@
 # Makefile for building LanceDB Go CGO bindings
+export BUILDKIT_PROGRESS ?= plain
 
 .PHONY: all build clean test example
 
@@ -85,3 +86,11 @@ help:
 	@echo "  build-darwin-arm64    - Build for macOS ARM64 (Apple Silicon)"
 	@echo "  build-windows-amd64   - Build for Windows x86_64"
 	@echo "  build-prebuilt-libs   - Build pre-built libraries for linux/arm64 and darwin/arm64"
+
+docker-dev:
+	docker build -t local/go-lancedb-builder:dev -f .docker/Dev.dockerfile \
+	--build-arg GO_USER_NAME=dev \
+	.
+
+run-docker-dev:
+	docker run -it --rm -v $(PWD):/ws -w /ws local/go-lancedb-builder:dev
