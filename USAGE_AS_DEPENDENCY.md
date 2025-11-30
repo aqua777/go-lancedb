@@ -112,14 +112,42 @@ No special library copying needed - the binary is self-contained.
 ```yaml
 jobs:
   build:
+    name: Build ${{ matrix.os_arch }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os_arch: linux-amd64
+            rust_target: x86_64-unknown-linux-gnu
+            cc: gcc
+          - os_arch: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
+            cc: aarch64-linux-gnu-gcc
+            apt_pkg: gcc-aarch64-linux-gnu
+
     steps:
       - uses: actions/checkout@v4
+      
       - uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-      - run: go build -v ./...
-      - run: go test -v ./...
+
+      - name: Install Cross-Compilation Tools
+        if: matrix.apt_pkg != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.apt_pkg }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Build
+        env:
+          CC: ${{ matrix.cc }}
+          # Tell Cargo which linker to use for the target
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: make build-${{ matrix.os_arch }}
 ```
 
 ### GitLab CI
@@ -127,9 +155,12 @@ jobs:
 ```yaml
 build:
   image: golang:1.21
+  before_script:
+    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source "$HOME/.cargo/env"
   script:
-    - go build -v ./...
-    - go test -v ./...
+    - make build
+    - make test
 ```
 
 ## Troubleshooting
