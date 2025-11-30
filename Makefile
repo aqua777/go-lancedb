@@ -37,14 +37,13 @@ deps:
 	cd rust-cgo && cargo fetch
 	go mod tidy
 
-# Cross-compilation targets (parameterized to avoid duplication)
-OS_ARCHES := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64
+# Supported platforms for cross-compilation
+OS_ARCHES := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 
 RUST_TARGET_linux-amd64 := x86_64-unknown-linux-gnu
 RUST_TARGET_linux-arm64 := aarch64-unknown-linux-gnu
 RUST_TARGET_darwin-amd64 := x86_64-apple-darwin
 RUST_TARGET_darwin-arm64 := aarch64-apple-darwin
-RUST_TARGET_windows-amd64 := x86_64-pc-windows-gnu
 
 GOOS_linux-amd64 := linux
 GOARCH_linux-amd64 := amd64
@@ -54,8 +53,6 @@ GOOS_darwin-amd64 := darwin
 GOARCH_darwin-amd64 := amd64
 GOOS_darwin-arm64 := darwin
 GOARCH_darwin-arm64 := arm64
-GOOS_windows-amd64 := windows
-GOARCH_windows-amd64 := amd64
 
 define BUILD_TARGET
 build-$(1):
@@ -72,20 +69,20 @@ build-prebuilt-libs:
 # Help target
 help:
 	@echo "Available targets:"
-	@echo "  build          - Build both Rust and Go components"
-	@echo "  build-rust     - Build only the Rust CGO library"
-	@echo "  build-go       - Build only the Go package"
-	@echo "  test           - Run Go tests"
-	@echo "  example        - Build the example program"
-	@echo "  clean          - Clean build artifacts"
-	@echo "  deps           - Install/update dependencies"
+	@echo "  build              - Build both Rust and Go components"
+	@echo "  build-rust         - Build only the Rust CGO library"
+	@echo "  build-go           - Build only the Go package"
+	@echo "  build-prebuilt-libs - Build static library for current platform (copies to libs/)"
+	@echo "  test               - Run Go tests"
+	@echo "  example            - Build and run the example program"
+	@echo "  clean              - Clean build artifacts"
+	@echo "  deps               - Install/update dependencies"
+	@echo ""
 	@echo "Cross-compilation targets:"
-	@echo "  build-linux-amd64     - Build for Linux x86_64"
-	@echo "  build-linux-arm64     - Build for Linux ARM64"
-	@echo "  build-darwin-amd64    - Build for macOS x86_64"
-	@echo "  build-darwin-arm64    - Build for macOS ARM64 (Apple Silicon)"
-	@echo "  build-windows-amd64   - Build for Windows x86_64"
-	@echo "  build-prebuilt-libs   - Build pre-built libraries for linux/arm64 and darwin/arm64"
+	@echo "  build-linux-amd64  - Build for Linux x86_64"
+	@echo "  build-linux-arm64  - Build for Linux ARM64"
+	@echo "  build-darwin-amd64 - Build for macOS x86_64"
+	@echo "  build-darwin-arm64 - Build for macOS ARM64 (Apple Silicon)"
 
 docker-dev:
 	docker build -t local/go-lancedb-builder:dev -f .docker/Dev.dockerfile \

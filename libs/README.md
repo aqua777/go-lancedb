@@ -1,67 +1,80 @@
-# Pre-built Rust CGO Libraries
+# Pre-built Static Libraries
 
-This directory contains pre-built Rust CGO libraries for specific architectures.
+This directory contains pre-built **static libraries** (`.a` files) for supported platforms. These are linked directly into your Go binary at compile time - no runtime dependencies.
 
 ## Directory Structure
 
 ```
 libs/
-├── linux-arm64/
-│   └── liblancedb_cgo.so
-└── darwin-arm64/
-    └── liblancedb_cgo.dylib
+├── darwin-arm64/liblancedb_cgo.a   # macOS Apple Silicon
+├── darwin-amd64/liblancedb_cgo.a   # macOS Intel
+├── linux-arm64/liblancedb_cgo.a    # Linux ARM64
+├── linux-amd64/liblancedb_cgo.a    # Linux x86_64
+└── README.md
 ```
 
-## Usage
+## How It Works
 
-The Go bindings automatically detect and use pre-built libraries from this directory when available. The CGO linker will:
+The CGO directives in `lancedb.go` automatically select the correct static library based on your `GOOS` and `GOARCH`. When you run `go build`, the library is statically linked into your binary.
 
-1. First check `libs/${GOOS}-${GOARCH}/` for a pre-built library
-2. Fall back to `rust-cgo/target/release/` if no pre-built library is found
+**Result:** A single binary with no runtime library dependencies.
 
-This means you can:
-- **Use pre-built libraries**: Place libraries in the appropriate `libs/` subdirectory
-- **Build from source**: If no pre-built library exists, it will use the locally built version
+## Building Libraries
 
-## Building Pre-built Libraries
-
-To build libraries for all supported architectures:
+### For Current Platform
 
 ```bash
 ./scripts/build-prebuilt-libs.sh
 ```
 
-This script will:
-- Install required Rust targets if needed
-- Build release libraries for linux/arm64 and darwin/arm64
-- Copy them to the appropriate `libs/` subdirectories
+### For All Platforms
 
-## Building for Specific Architecture
+Requires cross-compilation setup (Rust targets + appropriate linkers):
 
-To build for a specific architecture manually:
+```bash
+./scripts/build-prebuilt-libs.sh --all
+```
+
+### For Specific Platform
+
+```bash
+./scripts/build-prebuilt-libs.sh --target linux-amd64
+```
+
+### Manual Build
 
 ```bash
 cd rust-cgo
 
-# Linux ARM64
-cargo build --release --target aarch64-unknown-linux-gnu
-cp target/aarch64-unknown-linux-gnu/release/liblancedb_cgo.so ../libs/linux-arm64/
+# Native build
+cargo build --release
+cp target/release/liblancedb_cgo.a ../libs/<os>-<arch>/
 
-# macOS ARM64 (Apple Silicon)
-cargo build --release --target aarch64-apple-darwin
-cp target/aarch64-apple-darwin/release/liblancedb_cgo.dylib ../libs/darwin-arm64/
+# Cross-compile (requires target installed)
+rustup target add x86_64-unknown-linux-gnu
+cargo build --release --target x86_64-unknown-linux-gnu
+cp target/x86_64-unknown-linux-gnu/release/liblancedb_cgo.a ../libs/linux-amd64/
 ```
+
+## Supported Platforms
+
+| Platform | Rust Target | Status |
+|----------|-------------|--------|
+| darwin-arm64 | aarch64-apple-darwin | Available |
+| darwin-amd64 | x86_64-apple-darwin | Build required |
+| linux-arm64 | aarch64-unknown-linux-gnu | Available |
+| linux-amd64 | x86_64-unknown-linux-gnu | Build required |
 
 ## Requirements
 
-- Rust 1.70+ with rustup
-- Required Rust targets installed (script will install automatically):
-  - `aarch64-unknown-linux-gnu` for Linux ARM64
-  - `aarch64-apple-darwin` for macOS ARM64
+- Rust 1.70+
+- For cross-compilation: appropriate Rust targets and system linkers
 
-## Notes
+## Git LFS
 
-- Pre-built libraries are optimized release builds (`--release` flag)
-- Libraries are architecture-specific and cannot be cross-used
-- The Go bindings will automatically select the correct library based on `GOOS` and `GOARCH`
+Static libraries are stored using Git LFS due to their size (~40-100MB each). Make sure Git LFS is installed:
 
+```bash
+git lfs install
+git lfs pull
+```
