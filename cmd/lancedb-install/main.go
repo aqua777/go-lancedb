@@ -116,13 +116,13 @@ func main() {
 	flags := platformFlags[platform]
 	cgoLdflags := fmt.Sprintf("-L%s -llancedb_cgo %s", libDir, flags)
 
-	fmt.Printf("\n" + strings.Repeat("=", 60) + "\n")
+	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
 	fmt.Printf("Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n")
-	fmt.Printf(strings.Repeat("=", 60) + "\n\n")
+	fmt.Printf("\n%s\n\n", strings.Repeat("=", 60))
 	fmt.Printf("export CGO_LDFLAGS=\"%s\"\n", cgoLdflags)
-	fmt.Printf("\n" + strings.Repeat("=", 60) + "\n")
+	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
 	fmt.Printf("Or run this command to set it for the current session:\n")
-	fmt.Printf(strings.Repeat("=", 60) + "\n\n")
+	fmt.Printf("\n%s\n\n", strings.Repeat("=", 60))
 	fmt.Printf("export CGO_LDFLAGS='%s'\n", cgoLdflags)
 	fmt.Printf("\nThen build your project:\n")
 	fmt.Printf("  go build ./...\n")
