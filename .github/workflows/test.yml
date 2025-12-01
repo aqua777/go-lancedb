@@ -39,6 +39,16 @@ jobs:
         with:
           targets: ${{ matrix.rust_target }}
 
+      - name: Install protobuf (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protobuf (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.os_arch == 'linux-arm64'
         run: |
