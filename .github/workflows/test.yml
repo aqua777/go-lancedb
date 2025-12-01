@@ -14,14 +14,18 @@ jobs:
       matrix:
         include:
           - os_arch: linux-amd64
+            rust_target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            cgo_ldflags: "-L$HOME/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
+            # CGO directives in lancedb.go handle the linking path for us when building locally
+            
           - os_arch: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
-            cgo_ldflags: "-L$HOME/go/lib/lancedb/linux-arm64 -llancedb_cgo -lm -ldl -lpthread"
+            cross: true
+            
           - os_arch: darwin-arm64
+            rust_target: aarch64-apple-darwin
             runner: macos-14
-            cgo_ldflags: "-L$HOME/go/lib/lancedb/darwin-arm64 -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration"
 
     steps:
       - uses: actions/checkout@v4
@@ -30,18 +34,34 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Install LanceDB native library
-        run: go run cmd/lancedb-install/main.go
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.os_arch == 'linux-arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build Rust libraries (Local)
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          # We need to build the libs and put them where lancedb.go expects them (${SRCDIR}/libs/...)
+          # scripts/build-prebuilt-libs.sh does exactly this
+          ./scripts/build-prebuilt-libs.sh --target ${{ matrix.os_arch }}
 
       - name: Build
         env:
-          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
-        run: go build ./...
+          # Explicitly enable CGO
+          CGO_ENABLED: 1
+        run: go build -v ./...
 
       - name: Test
         # Tests can't run on cross-compiled architectures (linux-arm64 on ubuntu-latest)
         if: matrix.os_arch != 'linux-arm64'
         env:
-          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
+          CGO_ENABLED: 1
         run: go test -v ./...
-
