@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-libraries:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            rust_target: aarch64-apple-darwin
+            runner: macos-14
+          - target: darwin-amd64
+            rust_target: x86_64-apple-darwin
+            runner: macos-13
+          - target: linux-arm64
+            rust_target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            cross: true
+          - target: linux-amd64
+            rust_target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Install protobuf (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protobuf (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'linux-arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build Rust library
+        working-directory: rust-cgo
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo build --release --target ${{ matrix.rust_target }}
+
+      - name: Prepare release artifact
+        run: |
+          mkdir -p artifacts
+          cp rust-cgo/target/${{ matrix.rust_target }}/release/liblancedb_cgo.a artifacts/liblancedb_cgo-${{ matrix.target }}.a
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: liblancedb_cgo-${{ matrix.target }}
+          path: artifacts/liblancedb_cgo-${{ matrix.target }}.a
+
+  upload-release-assets:
+    name: Upload Release Assets
+    needs: build-libraries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*.a
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

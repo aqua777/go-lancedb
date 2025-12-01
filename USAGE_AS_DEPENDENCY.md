@@ -5,17 +5,27 @@ This package uses static linking - your Go binary includes everything it needs. 
 ## Quick Start
 
 ```bash
-# Add the dependency
+# Step 1: Add the dependency
 go get github.com/aqua777/go-lancedb
 
-# Build your app - produces a single binary
-go build -o myapp .
+# Step 2: Install the native library
+go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
 
-# Run it - just works
-./myapp
+# Step 3: Set CGO_LDFLAGS (the installer outputs the exact command)
+# Example for macOS ARM64:
+export CGO_LDFLAGS="-L$GOPATH/lib/lancedb/darwin-arm64 -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration"
+
+# Step 4: Build your app
+go build -o myapp .
 ```
 
-That's it. The static library is linked at compile time.
+Add the `CGO_LDFLAGS` export to your `~/.bashrc` or `~/.zshrc` so it persists across sessions.
+
+## Why Two Steps?
+
+The native library (`liblancedb_cgo.a`) is 100MB+ and stored with Git LFS. Unfortunately, `go get` doesn't fetch Git LFS files - you'd just get a 133-byte pointer file.
+
+The installer downloads the real library from GitHub Releases to `$GOPATH/lib/lancedb/` and tells you exactly what `CGO_LDFLAGS` to set.
 
 ## Example Code
 
@@ -39,6 +49,30 @@ func main() {
     fmt.Println("Connected to LanceDB!")
 }
 ```
+
+## Installer Options
+
+```bash
+# Install latest version
+go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
+
+# Install specific version
+go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest --version v0.0.7
+```
+
+The installer:
+- Detects your OS and architecture automatically
+- Downloads the correct library to `$GOPATH/lib/lancedb/{os}-{arch}/`
+- Outputs the exact `CGO_LDFLAGS` for your platform
+
+## Platform-Specific CGO_LDFLAGS
+
+| Platform | CGO_LDFLAGS |
+|----------|-------------|
+| macOS ARM64 | `-L$GOPATH/lib/lancedb/darwin-arm64 -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration` |
+| macOS Intel | `-L$GOPATH/lib/lancedb/darwin-amd64 -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration` |
+| Linux ARM64 | `-L$GOPATH/lib/lancedb/linux-arm64 -llancedb_cgo -lm -ldl -lpthread` |
+| Linux x86_64 | `-L$GOPATH/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread` |
 
 ## Supported Platforms
 
@@ -95,6 +129,13 @@ replace github.com/aqua777/go-lancedb => /path/to/go-lancedb
 FROM golang:1.21 AS builder
 
 WORKDIR /app
+
+# Install the native library
+RUN go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
+
+# Set CGO_LDFLAGS for Linux (GOPATH defaults to /go in golang image)
+ENV CGO_LDFLAGS="-L/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
+
 COPY . .
 RUN go build -o myapp .
 
@@ -112,18 +153,47 @@ No special library copying needed - the binary is self-contained.
 ```yaml
 jobs:
   build:
-    name: Build ${{ matrix.os_arch }}
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install LanceDB native library
+        run: go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
+
+      - name: Build
+        env:
+          CGO_LDFLAGS: "-L$HOME/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
+        run: go build ./...
+
+      - name: Test
+        env:
+          CGO_LDFLAGS: "-L$HOME/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
+        run: go test ./...
+```
+
+### GitHub Actions (Multi-Platform)
+
+```yaml
+jobs:
+  build:
+    name: Build ${{ matrix.os_arch }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         include:
           - os_arch: linux-amd64
-            rust_target: x86_64-unknown-linux-gnu
-            cc: gcc
+            runner: ubuntu-latest
+            cgo_ldflags: "-L$HOME/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
           - os_arch: linux-arm64
-            rust_target: aarch64-unknown-linux-gnu
-            cc: aarch64-linux-gnu-gcc
-            apt_pkg: gcc-aarch64-linux-gnu
+            runner: ubuntu-latest
+            cgo_ldflags: "-L$HOME/go/lib/lancedb/linux-arm64 -llancedb_cgo -lm -ldl -lpthread"
+          - os_arch: darwin-arm64
+            runner: macos-14
+            cgo_ldflags: "-L$HOME/go/lib/lancedb/darwin-arm64 -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration"
 
     steps:
       - uses: actions/checkout@v4
@@ -132,22 +202,13 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Install Cross-Compilation Tools
-        if: matrix.apt_pkg != ''
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.apt_pkg }}
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust_target }}
+      - name: Install LanceDB native library
+        run: go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
 
       - name: Build
         env:
-          CC: ${{ matrix.cc }}
-          # Tell Cargo which linker to use for the target
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: make build-${{ matrix.os_arch }}
+          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
+        run: go build ./...
 ```
 
 ### GitLab CI
@@ -156,23 +217,42 @@ jobs:
 build:
   image: golang:1.21
   before_script:
-    - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-    - source "$HOME/.cargo/env"
+    - go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
+  variables:
+    CGO_LDFLAGS: "-L/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
   script:
-    - make build
-    - make test
+    - go build ./...
+    - go test ./...
 ```
 
 ## Troubleshooting
 
 ### "cannot find -llancedb_cgo"
 
-The static library for your platform isn't available. Build from source:
+The native library isn't installed or `CGO_LDFLAGS` isn't set. Run:
 
 ```bash
-git clone https://github.com/aqua777/go-lancedb.git
-cd go-lancedb
-./scripts/build-prebuilt-libs.sh
+# Install the library
+go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
+
+# Set CGO_LDFLAGS (use the output from the installer)
+export CGO_LDFLAGS="..."
+
+# Retry build
+go build ./...
+```
+
+### "file too small" or linker errors after install
+
+The installer might have downloaded a Git LFS pointer file instead of the actual library. Check the release assets exist:
+
+```bash
+# Check file size (should be 40-100+ MB)
+ls -la $GOPATH/lib/lancedb/*/liblancedb_cgo.a
+
+# If tiny, delete and re-download
+rm -rf $GOPATH/lib/lancedb
+go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
 ```
 
 ### CGO Not Enabled
@@ -182,20 +262,20 @@ export CGO_ENABLED=1
 go build
 ```
 
-### Git LFS Not Installed
+### Building from Source (Alternative)
 
-The static libraries are stored with Git LFS. Install it:
+If the installer doesn't work for your platform, build from source:
 
 ```bash
-# macOS
-brew install git-lfs
+git clone https://github.com/aqua777/go-lancedb.git
+cd go-lancedb
+./scripts/build-prebuilt-libs.sh
+```
 
-# Ubuntu/Debian
-apt install git-lfs
+Then use a `replace` directive in your `go.mod`:
 
-# Then pull the files
-git lfs install
-git lfs pull
+```go
+replace github.com/aqua777/go-lancedb => /path/to/go-lancedb
 ```
 
 ## API Reference

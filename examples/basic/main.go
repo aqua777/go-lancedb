@@ -17,7 +17,7 @@ func main() {
 	defer os.RemoveAll(dbPath) // Remove this line if you want to inspect the database
 
 	fmt.Println("🚀 LanceDB Go - Comprehensive Example")
-	fmt.Println("=====================================\n")
+	fmt.Println("=====================================")
 
 	// ========================================
 	// 1. DATABASE CONNECTION
@@ -30,7 +30,7 @@ func main() {
 		log.Fatalf("Failed to connect: %v", err)
 	}
 	defer db.Close()
-	fmt.Println("   ✓ Connected successfully\n")
+	fmt.Println("   ✓ Connected successfully")
 
 	// ========================================
 	// 2. TABLE CREATION WITH SCHEMA
@@ -428,7 +428,7 @@ func main() {
 	// ========================================
 	// SUMMARY
 	// ========================================
-	fmt.Println("✅ Example completed successfully!\n")
+	fmt.Println("✅ Example completed successfully!")
 	fmt.Println("Features demonstrated:")
 	fmt.Println("  ✓ Database connection & management")
 	fmt.Println("  ✓ Custom schema creation with Arrow")
