@@ -40,6 +40,7 @@
     ],
     "containerEnv": {
         "CGO_LDFLAGS_ALLOW": "-Wl,-rpath,@executable_path",
+        "PKG_CONFIG_PATH": "/ws/libs/pkgconfig",
         "PATH": "/opt/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.local/bin"
     }
 }
