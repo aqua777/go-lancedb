@@ -34,6 +34,71 @@ struct ArrowArray {
     void* private_data;
 };
 
+struct ArrowArrayStream {
+    int (*get_schema)(struct ArrowArrayStream*, struct ArrowSchema*);
+    int (*get_next)(struct ArrowArrayStream*, struct ArrowArray*);
+    const char* (*get_last_error)(struct ArrowArrayStream*);
+    void (*release)(struct ArrowArrayStream*);
+    void* private_data;
+};
+
+// Helper functions expected by cdata
+void ArrowSchemaMarkReleased(struct ArrowSchema* schema) {
+    schema->release = NULL;
+}
+
+int ArrowSchemaIsReleased(const struct ArrowSchema* schema) {
+    return schema->release == NULL;
+}
+
+void ArrowSchemaRelease(struct ArrowSchema* schema) {
+    if (!ArrowSchemaIsReleased(schema)) {
+        schema->release(schema);
+        ArrowSchemaMarkReleased(schema);
+    }
+}
+
+void ArrowArrayMarkReleased(struct ArrowArray* array) {
+    array->release = NULL;
+}
+
+int ArrowArrayIsReleased(const struct ArrowArray* array) {
+    return array->release == NULL;
+}
+
+void ArrowArrayRelease(struct ArrowArray* array) {
+    if (!ArrowArrayIsReleased(array)) {
+        array->release(array);
+        ArrowArrayMarkReleased(array);
+    }
+}
+
+void ArrowArrayMove(struct ArrowArray* src, struct ArrowArray* dest) {
+    *dest = *src;
+    ArrowArrayMarkReleased(src);
+}
+
+void ArrowArrayStreamMarkReleased(struct ArrowArrayStream* stream) {
+    stream->release = NULL;
+}
+
+int ArrowArrayStreamIsReleased(const struct ArrowArrayStream* stream) {
+    return stream->release == NULL;
+}
+
+void ArrowArrayStreamRelease(struct ArrowArrayStream* stream) {
+    if (!ArrowArrayStreamIsReleased(stream)) {
+        stream->release(stream);
+        ArrowArrayStreamMarkReleased(stream);
+    }
+}
+
+void ArrowArrayStreamMove(struct ArrowArrayStream* src, struct ArrowArrayStream* dest) {
+    *dest = *src;
+    ArrowArrayStreamMarkReleased(src);
+}
+
+
 // Forward declarations of Rust functions
 extern void lancedb_arrow_array_release(struct ArrowArray* array);
 extern void lancedb_arrow_schema_release(struct ArrowSchema* schema);

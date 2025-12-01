@@ -6,6 +6,7 @@
 
 # Not needed for now.
 scripts/
+libs/pkgconfig/
 
 # Rust CGO build artifacts and dependencies
 rust-cgo/target/
