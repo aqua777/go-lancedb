@@ -74,6 +74,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
+          CGO_LDFLAGS: -L${{ github.workspace }}/libs/${{ matrix.os_arch }}
         run: go build -v ./...
 
       - name: Test
@@ -83,4 +84,5 @@ jobs:
           CGO_ENABLED: 1
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_LDFLAGS: -L${{ github.workspace }}/libs/${{ matrix.os_arch }}
         run: go test -v ./...
