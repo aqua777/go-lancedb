@@ -1,0 +1,47 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build ${{ matrix.os_arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os_arch: linux-amd64
+            runner: ubuntu-latest
+            cgo_ldflags: "-L$HOME/go/lib/lancedb/linux-amd64 -llancedb_cgo -lm -ldl -lpthread"
+          - os_arch: linux-arm64
+            runner: ubuntu-latest
+            cgo_ldflags: "-L$HOME/go/lib/lancedb/linux-arm64 -llancedb_cgo -lm -ldl -lpthread"
+          - os_arch: darwin-arm64
+            runner: macos-14
+            cgo_ldflags: "-L$HOME/go/lib/lancedb/darwin-arm64 -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install LanceDB native library
+        run: go run cmd/lancedb-install/main.go
+
+      - name: Build
+        env:
+          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
+        run: go build ./...
+
+      - name: Test
+        # Tests can't run on cross-compiled architectures (linux-arm64 on ubuntu-latest)
+        if: matrix.os_arch != 'linux-arm64'
+        env:
+          CGO_LDFLAGS: ${{ matrix.cgo_ldflags }}
+        run: go test -v ./...
+
