@@ -24,10 +24,7 @@
 package lancedb
 
 /*
-#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/libs/darwin-arm64/liblancedb_cgo.a -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration
-#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/libs/darwin-amd64/liblancedb_cgo.a -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration
-#cgo linux,arm64 LDFLAGS: ${SRCDIR}/libs/linux-arm64/liblancedb_cgo.a -lm -ldl -lpthread
-#cgo linux,amd64 LDFLAGS: ${SRCDIR}/libs/linux-amd64/liblancedb_cgo.a -lm -ldl -lpthread
+#cgo pkg-config: lancedb
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>

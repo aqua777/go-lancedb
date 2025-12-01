@@ -1,12 +1,15 @@
-// Command lancedb-install downloads pre-built LanceDB static libraries from GitHub releases.
+// Command lancedb-install downloads pre-built LanceDB static libraries from GitHub releases
+// and generates a pkg-config file for use with CGO.
 //
 // Usage:
 //
 //	go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest
 //	go run github.com/aqua777/go-lancedb/cmd/lancedb-install@latest --version v0.0.7
 //
-// The installer downloads the correct library for your OS/architecture to ~/.lancedb/libs/
-// and outputs the CGO_LDFLAGS needed to build projects using go-lancedb.
+// The installer:
+// 1. Downloads the correct library for your OS/architecture to $GOPATH/lib/lancedb/{os}-{arch}/
+// 2. Generates a lancedb.pc file in $GOPATH/lib/pkgconfig/
+// 3. Outputs instructions to set PKG_CONFIG_PATH
 package main
 
 import (
@@ -62,17 +65,25 @@ func main() {
 		gopath = filepath.Join(homeDir, "go")
 	}
 
+	// Library Install Path
 	libDir := filepath.Join(gopath, "lib", "lancedb", platform)
 	libPath := filepath.Join(libDir, libraryName)
 
-	// Create directory
+	// PkgConfig Install Path
+	pkgConfigDir := filepath.Join(gopath, "lib", "pkgconfig")
+	pkgConfigPath := filepath.Join(pkgConfigDir, "lancedb.pc")
+
+	// Create directories
 	if err := os.MkdirAll(libDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Cannot create directory %s: %v\n", libDir, err)
 		os.Exit(1)
 	}
+	if err := os.MkdirAll(pkgConfigDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Cannot create directory %s: %v\n", pkgConfigDir, err)
+		os.Exit(1)
+	}
 
 	// Construct download URL
-	// Format: https://github.com/aqua777/go-lancedb/releases/download/v0.0.7/liblancedb_cgo-darwin-arm64.a
 	downloadURL := fmt.Sprintf(
 		"https://github.com/%s/%s/releases/download/%s/liblancedb_cgo-%s.a",
 		repoOwner, repoName, *version, platform,
@@ -93,14 +104,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get file size for verification
+	// Verify download
 	info, err := os.Stat(libPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: Cannot stat downloaded file: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Sanity check - LFS pointer files are tiny (~130 bytes), real libraries are MB+
 	if info.Size() < 10000 {
 		fmt.Fprintf(os.Stderr, "Warning: Downloaded file is suspiciously small (%d bytes).\n", info.Size())
 		fmt.Fprintf(os.Stderr, "This might be a Git LFS pointer file, not the actual library.\n")
@@ -109,23 +119,34 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\nSuccess! Library installed to:\n")
-	fmt.Printf("  %s (%d MB)\n", libPath, info.Size()/(1024*1024))
+	fmt.Printf("Library installed to: %s (%d MB)\n", libPath, info.Size()/(1024*1024))
 
-	// Output CGO_LDFLAGS
+	// Generate pkg-config file
 	flags := platformFlags[platform]
-	cgoLdflags := fmt.Sprintf("-L%s -llancedb_cgo %s", libDir, flags)
+	pcContent := fmt.Sprintf(`Name: lancedb
+Description: LanceDB Static Library
+Version: %s
+Libs: -L%s -llancedb_cgo %s
+Cflags: 
+`, *version, libDir, flags)
+
+	if err := os.WriteFile(pkgConfigPath, []byte(pcContent), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Cannot write pkg-config file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Pkg-config file created at: %s\n", pkgConfigPath)
 
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	fmt.Printf("Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n")
-	fmt.Printf("\n%s\n\n", strings.Repeat("=", 60))
-	fmt.Printf("export CGO_LDFLAGS=\"%s\"\n", cgoLdflags)
+	fmt.Printf("Setup Instructions:\n")
+	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
+	fmt.Printf("1. Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n\n")
+	fmt.Printf("   export PKG_CONFIG_PATH=\"$PKG_CONFIG_PATH:%s\"\n\n", pkgConfigDir)
+	fmt.Printf("2. Apply changes (or open a new terminal):\n\n")
+	fmt.Printf("   source ~/.zshrc  # or ~/.bashrc\n\n")
+	fmt.Printf("3. Build your project:\n\n")
+	fmt.Printf("   go build ./...\n")
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	fmt.Printf("Or run this command to set it for the current session:\n")
-	fmt.Printf("\n%s\n\n", strings.Repeat("=", 60))
-	fmt.Printf("export CGO_LDFLAGS='%s'\n", cgoLdflags)
-	fmt.Printf("\nThen build your project:\n")
-	fmt.Printf("  go build ./...\n")
 }
 
 func downloadFile(filepath string, url string) error {
@@ -151,7 +172,7 @@ func downloadFile(filepath string, url string) error {
 	}
 
 	// Copy with progress indication
-	size, err := io.Copy(out, resp.Body)
+	_, err = io.Copy(out, resp.Body)
 	if err != nil {
 		os.Remove(tmpPath)
 		return fmt.Errorf("download interrupted: %w", err)
@@ -165,7 +186,5 @@ func downloadFile(filepath string, url string) error {
 		return fmt.Errorf("cannot rename file: %w", err)
 	}
 
-	fmt.Printf("Downloaded %d bytes\n", size)
 	return nil
 }
-
