@@ -16,16 +16,21 @@ jobs:
           - os_arch: linux-amd64
             rust_target: x86_64-unknown-linux-gnu
             runner: ubuntu-latest
-            # CGO directives in lancedb.go handle the linking path for us when building locally
+            goos: linux
+            goarch: amd64
             
           - os_arch: linux-arm64
             rust_target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
-            cross: true
+            goos: linux
+            goarch: arm64
+            cc: aarch64-linux-gnu-gcc
             
           - os_arch: darwin-arm64
             rust_target: aarch64-apple-darwin
             runner: macos-14
+            goos: darwin
+            goarch: arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -65,8 +70,10 @@ jobs:
 
       - name: Build
         env:
-          # Explicitly enable CGO
           CGO_ENABLED: 1
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CC: ${{ matrix.cc }}
         run: go build -v ./...
 
       - name: Test
@@ -74,4 +81,6 @@ jobs:
         if: matrix.os_arch != 'linux-arm64'
         env:
           CGO_ENABLED: 1
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: go test -v ./...
