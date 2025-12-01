@@ -24,8 +24,7 @@
 package lancedb
 
 /*
-#cgo darwin LDFLAGS: -llancedb_cgo -lm -ldl -lresolv -framework CoreFoundation -framework Security -framework SystemConfiguration
-#cgo linux LDFLAGS: -llancedb_cgo -lm -ldl -lpthread
+#cgo pkg-config: lancedb
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>

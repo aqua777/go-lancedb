@@ -68,13 +68,16 @@ jobs:
           # scripts/build-prebuilt-libs.sh does exactly this
           ./scripts/build-prebuilt-libs.sh --target ${{ matrix.os_arch }}
 
+      - name: Generate pkg-config
+        run: make generate-pc GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+
       - name: Build
         env:
           CGO_ENABLED: 1
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CC: ${{ matrix.cc }}
-          CGO_LDFLAGS: -L${{ github.workspace }}/libs/${{ matrix.os_arch }}
+          PKG_CONFIG_PATH: ${{ github.workspace }}/libs/pkgconfig
         run: go build -v ./...
 
       - name: Test
@@ -84,5 +87,5 @@ jobs:
           CGO_ENABLED: 1
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_LDFLAGS: -L${{ github.workspace }}/libs/${{ matrix.os_arch }}
+          PKG_CONFIG_PATH: ${{ github.workspace }}/libs/pkgconfig
         run: go test -v ./...
